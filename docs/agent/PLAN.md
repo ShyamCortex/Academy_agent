@@ -15,12 +15,16 @@ Everything else is in [Later](#later-not-in-the-22-nov-core).
 | 4 | `AGENTS.md` gets a one-line pointer to the rules in `CLAUDE.md`. | Shyam |
 | 5 | `.python-version` pins Python 3.13 for this project. Your laptop keeps 3.14 for everything else. | Shyam |
 | 6 | `uv.lock` is fixed to match `pyproject.toml` in **its own commit**. | Shyam |
+| 7 | **Memory trim approved:** the academy graph learns reply wording (`response_preferences`) only. | Shyam |
+| 8 | **Local outbox approved:** approved replies go to a local file; calendar booking stays real. | Shyam |
+| 9 | The core runs on a **labelled message dataset** (CLI / LangGraph Studio), not a live inbox. The README must say so and list Gmail send/ingest under Later. | Shyam |
+| 10 | Test Supabase project and Google test calendar ready by **8 Nov**. | Shyam |
 
 ## Status
 
 | Phase | What | Branch | Hours | Needs from you first | Target date | Status |
 |---|---|---|---|---|---|---|
-| 1a | Run on Gemini + Groq via env vars | `phase/1a-models` | 3 | API keys in `.env` | 3–5 Nov | Waiting for OK on this cut |
+| 1a | Run on Gemini + Groq via env vars | `phase/1a-models` | 3 | API keys in `.env` | 3–5 Nov | In progress |
 | 1 | Retarget: 7 labels, prompts, sensitive route, data format | `phase/1-retarget` | 5 | — | 6–8 Nov | Not started |
 | 2 | Real tools + approval + sensitive block in code | `phase/2-tools-guards` | 8 | Test Supabase project + SQL files, Google test calendar + OAuth | 9–14 Nov | Not started |
 | 5 | Safety evals (core subset) | `phase/5-evals` | 5 | The 40 messages (dev 30 by 13 Nov) | 15–17 Nov | Not started |
@@ -242,6 +246,7 @@ laptop commands, teach-back.
 ## Phase 7 — README + demo video (3.5 h)
 
 - README rewrite: what it does, a mermaid architecture diagram, the hard rules and the code that enforces each one, the eval table, how to run, **credit to `langchain-ai/agents-from-scratch` and the MIT licence kept**.
+- **Scope statement (required):** the README says plainly that the core runs on a **labelled message dataset** (CLI / LangGraph Studio), **not a live inbox**; approved replies go to a **local outbox**; and it lists **Gmail send/ingest** under *Later*.
 - 3-minute demo script: a `book_demo` message with approval and calendar event; a Tenglish message; a `sensitive` message that stops at the owner; the eval numbers.
 - Resume bullets from measured numbers only.
 - **Done when:** README renders on GitHub; you record the video.
@@ -265,6 +270,4 @@ laptop commands, teach-back.
 
 ## Open questions
 
-1. **Approve the memory trim in Phase 1** (response preferences only)?
-2. **Approve the local outbox for `send_reply` in the core** (real Gmail send moves to Later)?
-3. Test Supabase project and Google test calendar ready by **8 Nov**?
+None open. Decisions 7–10 above answer the three questions from the cut review.
