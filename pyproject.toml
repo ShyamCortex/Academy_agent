@@ -22,6 +22,8 @@ dependencies = [
     "pyppeteer",
     "html2text",
     "rich",
+    "langchain-google-genai>=4.4.2",
+    "langchain-groq>=1.1.3",
 ]
 
 [project.optional-dependencies]

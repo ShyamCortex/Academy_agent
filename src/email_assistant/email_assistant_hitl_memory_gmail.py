@@ -1,11 +1,11 @@
 from typing import Literal
 
-from langchain.chat_models import init_chat_model
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.store.base import BaseStore
 from langgraph.types import interrupt, Command
 
+from email_assistant.models import structured_llm, tool_llm
 from email_assistant.tools import get_tools, get_tools_by_name
 from email_assistant.tools.gmail.prompt_templates import GMAIL_TOOLS_PROMPT
 from email_assistant.tools.gmail.gmail_tools import mark_as_read
@@ -20,13 +20,16 @@ load_dotenv(".env")
 tools = get_tools(["send_email_tool", "schedule_meeting_tool", "check_calendar_tool", "Question", "Done"], include_gmail=True)
 tools_by_name = get_tools_by_name(tools)
 
-# Initialize the LLM for use with router / structured output
-llm = init_chat_model("openai:gpt-4.1", temperature=0.0)
-llm_router = llm.with_structured_output(RouterSchema) 
+# Models come from env vars (TRIAGE_MODEL / AGENT_MODEL), see email_assistant/models.py
 
-# Initialize the LLM, enforcing tool use (of any available tools) for agent
-llm = init_chat_model("openai:gpt-4.1", temperature=0.0)
-llm_with_tools = llm.bind_tools(tools, tool_choice="required")
+# LLM for use with router / structured output
+llm_router = structured_llm("triage", RouterSchema)
+
+# LLM for the agent, enforcing tool use (of any available tools)
+llm_with_tools = tool_llm("agent", tools, tool_choice="required")
+
+# LLM that rewrites a memory profile from owner feedback (AGENT_MODEL)
+memory_llm = structured_llm("agent", UserPreferences)
 
 def get_memory(store, namespace, default_content=None):
     """Get memory from the store or initialize with default if it doesn't exist.
@@ -67,8 +70,7 @@ def update_memory(store, namespace, messages):
     # Get the existing memory
     user_preferences = store.get(namespace, "user_preferences")
     # Update the memory
-    llm = init_chat_model("openai:gpt-4.1", temperature=0.0).with_structured_output(UserPreferences)
-    result = llm.invoke(
+    result = memory_llm.invoke(
         [
             {"role": "system", "content": MEMORY_UPDATE_INSTRUCTIONS.format(current_profile=user_preferences.value, namespace=namespace)},
         ] + messages
