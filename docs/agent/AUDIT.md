@@ -435,3 +435,18 @@ Deprecation seen at runtime: `StateGraph(State, input=StateInput)` →
 | No chess teaching | Nothing | Prompt rule + judge eval. |
 | Keys in `.env`, never printed | `.env` is git-ignored; `.secrets/` ignored | Make sure logs never print keys or tokens. |
 | Keep MIT licence and credit base repo | `LICENSE` present | Add credit in README (Phase 7). |
+
+---
+
+## 13. Addendum from Phase 1a (2026-11-03)
+
+| Item | Finding |
+|---|---|
+| Model calls | Now built by `src/email_assistant/models.py` (lazy, env-var driven, with retry). No `init_chat_model` call remains outside that file; a unit test guards this. §7 of this audit describes the code *before* Phase 1a. |
+| Import without keys | All 5 graph modules now import with no keys (before: all 5 failed with `OpenAIError`). Checked by `tests/unit/test_graph_imports.py`. |
+| API key variables | `langchain-google-genai` 4.4.2: `GOOGLE_API_KEY`, then `GEMINI_API_KEY`. `langchain-groq` 1.1.3: `GROQ_API_KEY`. (Read from the installed package source.) |
+| `tool_choice` on Gemini | The wrapper maps `"any"` and `"required"` to the same forced-tool mode. Real behaviour: UNKNOWN until `model_check --ping` runs on the laptop. |
+| Model ids and free-tier limits | UNKNOWN. The cloud sandbox cannot reach the Gemini or Groq docs. |
+| **Memory store bug (upstream)** | `get_memory` writes a plain `str` into the store. LangGraph 1.2.19 `InMemoryStore.put` raises `ValueError` for non-dict values (reproduced). So the memory graphs likely fail on the first memory read with this lock. To fix in Phase 1 (store a dict). |
+| Tests that run with no keys | 31 tests in `tests/unit/` (was 0). |
+| `uv.lock` | Refreshed in its own commit; `uv lock --check` passes. |

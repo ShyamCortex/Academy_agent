@@ -24,7 +24,7 @@ Everything else is in [Later](#later-not-in-the-22-nov-core).
 
 | Phase | What | Branch | Hours | Needs from you first | Target date | Status |
 |---|---|---|---|---|---|---|
-| 1a | Run on Gemini + Groq via env vars | `phase/1a-models` | 3 | API keys in `.env` | 3–5 Nov | In progress |
+| 1a | Run on Gemini + Groq via env vars | `phase/1a-models` | 3 | API keys in `.env` | 3–5 Nov | Code done + no-key tests pass (31); **real-model run on laptop pending** |
 | 1 | Retarget: 7 labels, prompts, sensitive route, data format | `phase/1-retarget` | 5 | — | 6–8 Nov | Not started |
 | 2 | Real tools + approval + sensitive block in code | `phase/2-tools-guards` | 8 | Test Supabase project + SQL files, Google test calendar + OAuth | 9–14 Nov | Not started |
 | 5 | Safety evals (core subset) | `phase/5-evals` | 5 | The 40 messages (dev 30 by 13 Nov) | 15–17 Nov | Not started |
@@ -90,6 +90,11 @@ new branch from main
 - Cloud: `tests/unit/` passes with **no keys** — every graph module imports; `email_assistant` runs one email end to end on a fake model; retry backoff is tested with a fake clock.
 - Laptop: `python tests/run_all_tests.py --all` runs on Gemini with the Groq judge. Record the pass rate; 100% is not required.
 
+**Done differently from the first draft (Phase 1a result):**
+- The cloud sandbox cannot reach `ai.google.dev` or `console.groq.com`, so model ids could **not** be read from the official docs here. `.env.example` leaves the three model ids blank; `python -m email_assistant.model_check --list` prints the ids your own keys can use, and `--ping` tests the exact calls the graphs need (structured output, forced tool calls). Check ids against the docs on your laptop.
+- Verified from the installed package source: `langchain-google-genai` reads `GOOGLE_API_KEY` first, then `GEMINI_API_KEY`; `langchain-groq` reads `GROQ_API_KEY`; the Gemini wrapper maps both `tool_choice="any"` and `"required"` to its forced-tool mode. Whether Gemini obeys it in practice is checked by `--ping` on the laptop.
+- Pydantic moved to 2.14 and langchain to 1.4 when the lock was refreshed.
+
 **Files touched:** `.github/workflows/*` (deleted), `.python-version`, `AGENTS.md`, `CLAUDE.md`, `pyproject.toml`, `uv.lock`, `.env.example`, `src/email_assistant/models.py` (new), 5 graph files, `tests/test_response.py`, `tests/fakes.py` and `tests/unit/` (new).
 
 **Risks:**
@@ -124,6 +129,7 @@ Gemini/Groq/LangSmith keys, then the teach-back.
 | `ignore` | END |
 
 - **Memory trim (proposed cut, needs your OK):** the academy graph keeps memory only for `response_preferences` (tone/wording). It drops the `triage_preferences` rewrite and `cal_preferences` rewrite. Reason: upstream lets an LLM rewrite the triage rules from owner feedback, which can slowly teach it to answer `sensitive` messages. Less code, safer. Trade-off: it learns less from feedback. Full memory goes to Later.
+- **Fix the memory store format** (found in Phase 1a): upstream `get_memory` / `update_memory` store the profile as plain text, and LangGraph 1.x `InMemoryStore` rejects non-dict values (`ValueError`, verified). Store `{"preferences": "<text>"}` instead and add a test with the real `InMemoryStore`.
 - Date/time computed per call in `Asia/Kolkata` (upstream fixes the date at import time).
 - No full-email `print` in academy code.
 - Dataset: `data/eval/parent_messages.jsonl`, one JSON object per line:
