@@ -450,3 +450,4 @@ Deprecation seen at runtime: `StateGraph(State, input=StateInput)` →
 | **Memory store bug (upstream)** | `get_memory` writes a plain `str` into the store. LangGraph 1.2.19 `InMemoryStore.put` raises `ValueError` for non-dict values (reproduced). So the memory graphs likely fail on the first memory read with this lock. To fix in Phase 1 (store a dict). |
 | Tests that run with no keys | 31 tests in `tests/unit/` (was 0). |
 | `uv.lock` | Refreshed in its own commit; `uv lock --check` passes. |
+| `.env` and `tests/run_all_tests.py` | `run_all_tests.py` changes into `tests/` before starting pytest, and the code loads `.env` relative to the current folder, so a `.env` in the repo root is **not** found (verified). Run pytest from the repo root instead, or export the variables. |
