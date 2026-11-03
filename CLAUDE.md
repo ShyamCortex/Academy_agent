@@ -89,3 +89,31 @@ Test all notebooks to ensure they run without errors:
 python tests/test_notebooks.py
 ```
 
+
+## Academy Support Agent rules
+
+This repo is being turned into the **Academy Support Agent** for EduChess (Champion Chess Academy, Visakhapatnam). Plan and audit: `docs/agent/PLAN.md`, `docs/agent/AUDIT.md`. These rules override anything above.
+
+### Hard rules (enforce in code, not only in prompts)
+
+1. **Owner approval on every send and every calendar change.** Any tool that sends a message or creates/changes/deletes a calendar event must go through a HITL interrupt. Deny by default: only tools on an explicit read-only allow-list may run without approval.
+2. **No invented facts.** Never state a fee, date, time, or seat count unless it came from a tool result in the same run.
+3. **Sensitive messages are never drafted.** A message labelled `sensitive` goes to the owner only; it must never reach the drafting agent, whatever memory or feedback says.
+4. **EduChess is read-only.** Use only the Supabase anon key. Never write, update or delete EduChess data. Never use a service-role key for EduChess.
+5. **Minimal child data, synthetic data only.** Keep only what the task needs (e.g. first name). Tests, fixtures and eval data are synthetic. Never log message bodies or personal data.
+6. **No chess teaching from the model.** The agent handles admin (demos, fees, schedules, events); it does not give chess lessons or advice.
+7. **Secrets.** Keys live in `.env` (git-ignored) or the deploy platform's secret store. Never print, log, commit or echo keys or tokens.
+8. **Licence.** Keep the MIT `LICENSE` and credit the base repo `langchain-ai/agents-from-scratch`.
+9. **Dockerfile is owner-written.** Never create or edit a `Dockerfile`.
+
+### Models
+
+- Free tiers only, no paid keys. Gemini Flash-Lite for triage; Gemini Flash for drafting and tool use (Google AI Studio key). The eval judge is an open model on Groq's free tier (different model family from the drafter).
+- Provider and model names come from env vars, never hard-coded. Check current model names in the official docs, don't guess.
+- Every model call needs retry with exponential backoff (free tiers rate-limit).
+- Tracing stays on LangSmith.
+
+### Working method
+
+- Cloud sessions cannot see `.env` and have limited network: write code and tests that run with fake/stub models; real-model tests run on the owner's laptop (Windows, uv).
+- Each phase: new branch; smallest change that meets "done when"; run no-key tests before and after; clear commit message; update `docs/agent/PLAN.md` status; give the exact laptop commands to pull and run real tests.
