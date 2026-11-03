@@ -1,3 +1,5 @@
+> **Academy Support Agent:** the hard rules, model rules and working method for this repo are in [`CLAUDE.md`](CLAUDE.md#academy-support-agent-rules). Follow them.
+
 # Agents in this Repository
 
 ## Overview
