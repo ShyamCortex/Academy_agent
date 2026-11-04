@@ -114,3 +114,31 @@ def test_the_full_check_catches_wrong_counts_and_samples():
     assert any("30 dev + 10 heldout" in p for p in check_full_set(wrong_split))
     no_telugu = [Message(**{**m.__dict__, "language": "en"}) for m in _forty()]
     assert any("Telugu" in p for p in check_full_set(no_telugu))
+
+
+# ---- the dev file + held-out file as one set, and the FAQ tool -------------------------------------
+
+def test_search_knowledge_is_a_valid_expected_tool(tmp_path):
+    row = {**GOOD, "expected_tool_calls": ["search_knowledge", "send_reply"]}
+    assert load_messages(_write(tmp_path, row))[0].expected_tool_calls == ["search_knowledge", "send_reply"]
+
+
+def test_two_files_are_checked_as_one_set(tmp_path):
+    from email_assistant.academy.dataset import check_files
+
+    dev = tmp_path / "dev.jsonl"
+    held = tmp_path / "held.jsonl"
+    dev.write_text(json.dumps({**GOOD, "id": "d-1"}) + "\n", encoding="utf-8")
+    held.write_text(json.dumps({**GOOD, "id": "h-1", "split": "heldout"}) + "\n", encoding="utf-8")
+    messages, problems = check_files([str(dev), str(held)])
+    assert [m.id for m in messages] == ["d-1", "h-1"] and problems == []
+
+
+def test_an_id_in_both_files_and_a_mixed_file_are_reported(tmp_path):
+    from email_assistant.academy.dataset import check_files
+
+    a, b = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+    a.write_text(json.dumps({**GOOD, "id": "x"}) + "\n" + json.dumps({**GOOD, "id": "y", "split": "heldout"}) + "\n", encoding="utf-8")
+    b.write_text(json.dumps({**GOOD, "id": "x"}) + "\n", encoding="utf-8")
+    _, problems = check_files([str(a), str(b)])
+    assert any("mixes dev and heldout" in p for p in problems) and any("'x' is in both" in p for p in problems)

@@ -120,13 +120,34 @@ def check_full_set(messages: list[Message]) -> list[str]:
     return problems
 
 
+def check_files(paths: list[str]) -> tuple[list[Message], list[str]]:
+    """Load several dataset files as one set (dev file + held-out file). Returns the messages and any problems.
+
+    Problems: an id used in two files, and a file that mixes dev and held-out rows (the eval runner would refuse it).
+    """
+    messages, problems, seen = [], [], {}
+    for path in paths:
+        rows = load_messages(path)
+        if len({m.split for m in rows}) > 1:
+            problems.append(f"{path} mixes dev and heldout rows. Keep them in separate files.")
+        for m in rows:
+            if m.id in seen:
+                problems.append(f"id {m.id!r} is in both {seen[m.id]} and {path}.")
+            seen[m.id] = path
+        messages += rows
+    return messages, problems
+
+
 if __name__ == "__main__":
     import sys
 
-    target = sys.argv[1] if len(sys.argv) > 1 else "data/eval/parent_messages.jsonl"
-    rows = load_messages(target)
-    print(f"{target}: {len(rows)} messages are valid.")
+    targets = [a for a in sys.argv[1:] if not a.startswith("--")] or ["data/eval/dev_messages.jsonl", "data/eval/heldout_messages.jsonl"]
+    rows, issues = check_files(targets)
+    print(f"{', '.join(targets)}: {len(rows)} messages are valid.")
     if "--full" in sys.argv:
-        issues = check_full_set(rows)
+        issues += check_full_set(rows)
         print("\n".join(f"  PROBLEM: {p}" for p in issues) or "  full-set check passed (40 = 30 dev + 10 heldout, 8+ Telugu/Tenglish).")
         sys.exit(1 if issues else 0)
+    if issues:
+        print("\n".join(f"  PROBLEM: {p}" for p in issues))
+        sys.exit(1)

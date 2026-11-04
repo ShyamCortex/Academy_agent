@@ -177,3 +177,31 @@ def test_recall_with_the_fake_embedder_is_a_regression_guard_not_a_quality_numbe
     result = evaluate(local_search(CHUNKS, HashingEmbedder()), QUESTIONS)
     assert result["recall@3"] >= 0.3, result["misses"]
     assert result["recall@1"] <= result["recall@3"]
+
+
+def test_the_recall_command_prints_and_saves_a_result_without_text(tmp_path, capsys, monkeypatch):
+    import dotenv
+    import json
+
+    from email_assistant.academy.rag_eval import main
+
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: None)
+    search = local_search(CHUNKS, HashingEmbedder())
+    assert main(["--out-dir", str(tmp_path)], search=search) == 0
+    saved = json.loads(next(tmp_path.glob("rag_recall_*.json")).read_text(encoding="utf-8"))
+    assert saved["n"] == 15 and "recall@3" in saved and saved["faq_chunks"] == 30
+    assert "recall@3" in capsys.readouterr().out
+    assert "Is the demo class free?" not in json.dumps(saved)          # chunk and question ids only
+
+
+def test_the_recall_command_says_what_is_missing_instead_of_a_traceback(monkeypatch, capsys):
+    import dotenv
+
+    from email_assistant.academy import embeddings
+    from email_assistant.academy.rag_eval import main
+
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr(embeddings, "_override", None)
+    monkeypatch.delenv("EMBEDDING_MODEL", raising=False)
+    assert main(["--index", "local"]) == 1
+    assert "EMBEDDING_MODEL is not set" in capsys.readouterr().out

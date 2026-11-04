@@ -127,16 +127,24 @@ def main(argv: Sequence[str] | None = None, *, search: Callable[[str], list[str]
     from dotenv import load_dotenv
 
     load_dotenv(".env")
+    from email_assistant.academy.data_client import DataSourceError
+    from email_assistant.academy.embeddings import EmbeddingError
+    from email_assistant.academy.settings import AcademyConfigError
+
     chunks = load_faq(args.faq)
     questions = load_questions(args.questions, chunks)
-    if search is None:
-        if args.index == "local":
-            from email_assistant.academy.embeddings import get_embedder
+    try:
+        if search is None:
+            if args.index == "local":
+                from email_assistant.academy.embeddings import get_embedder
 
-            search = local_search(chunks, get_embedder())
-        else:
-            search = remote_search()
-    result = evaluate(search, questions)
+                search = local_search(chunks, get_embedder())
+            else:
+                search = remote_search()
+        result = evaluate(search, questions)
+    except (AcademyConfigError, EmbeddingError, DataSourceError) as exc:
+        print(f"Not ready: {exc}")
+        return 1
     print(format_report(result, args.index))
     now = datetime.now(config.TIMEZONE)
     out_dir = Path(args.out_dir)

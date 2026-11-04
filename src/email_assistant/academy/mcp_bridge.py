@@ -15,6 +15,7 @@ Tests connect to an in-process server instead (`in_process_client`).
 import asyncio
 import atexit
 import concurrent.futures
+import json
 import os
 import sys
 import threading
@@ -185,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
     """Laptop check: start the MCP server as a child process, list its tools, call one of them.
 
         python -m email_assistant.academy.mcp_bridge get_plans
+        python -m email_assistant.academy.mcp_bridge search_knowledge --args '{"question": "is the demo free"}'
     """
     import argparse
 
@@ -192,12 +194,18 @@ def main(argv: list[str] | None = None) -> int:
 
     load_dotenv(".env")
     parser = argparse.ArgumentParser(description="Call a read-only tool through the MCP server.")
-    parser.add_argument("tool", nargs="?", default="get_plans", help="a read-only tool that needs no arguments")
+    parser.add_argument("tool", nargs="?", default="get_plans", help="a read-only tool")
+    parser.add_argument("--args", default="{}", help="the tool's arguments as JSON, for example '{\"question\": \"is the demo free\"}'")
     args = parser.parse_args(argv)
+    try:
+        arguments = json.loads(args.args)
+    except json.JSONDecodeError:
+        print("--args must be valid JSON.")
+        return 1
     client = McpReadClient(stdio_target())
     try:
         print("The MCP server offers:", ", ".join(client.list_tool_names()))
-        print(client.call(args.tool, {}))
+        print(client.call(args.tool, arguments))
         return 0
     except McpError as exc:
         print(f"Failed: {exc}")
