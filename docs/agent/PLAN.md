@@ -32,6 +32,7 @@ Everything else is in [Later](#later-not-in-the-22-nov-core).
 | 21 | `grounding.py` reads equivalent formats as one fact (`5 pm` = `17:00`; `7 Nov` = `Saturday 7th` = `7, 14 and 21 Nov` = `2026-11-07`) and `wrong_weekdays` checks a weekday written **right next to** a date. A draft with a wrong weekday is not clean, so it counts against the "no invented numbers" bar. | Shyam |
 | 22 | The judge is told the sender's display name (not the email address) and returns `dates_match_tools`; false caps the score at 2. v1 rows have no such key and are read as "matches". | Shyam |
 | 23 | Groq 400 `output_parse_failed` is recovered like `tool_use_failed`: the model is reminded and asked again, at most 2 times, never waited on. Safe because the error comes before any tool runs. | Shyam |
+| 24 | A streamed model call (`langgraph dev`, Studio) reports "Tool choice is required, but model did not call a tool" as a plain `APIError` with no status code and no `tool_use_failed` code. It is recognised by error type (`APIError` of the groq or openai SDK, also as the cause of another error) **and** message, and gets the same remind-and-retry (max 2) as the other form; never waited on. `e2e.py` reports the calendar event and outbox lines even when the run ends in an error or times out (never a pass: exit code 1). | Shyam |
 
 ## Status
 
@@ -44,6 +45,7 @@ Everything else is in [Later](#later-not-in-the-22-nov-core).
 | 4 | Small MCP server (read-only) | same branch as Phase 2 | 2 | — | 18 Nov | **Done, merged** (PR #5). `search_knowledge` joined the server in Phase 3 |
 | 3 | Light RAG over the FAQ | same branch as Phase 5 | 3.5 | FAQ text by 17 Nov | 18–19 Nov | **Code done in the cloud (FAQ written by the build session, 30 Q&As); SQL, loader and recall@3 pending on the laptop** ([`LAPTOP_RAG_EVALS.md`](LAPTOP_RAG_EVALS.md)) |
 | 5b | Eval v2: fix the general causes found in the v1 dev replies | `claude/relaxed-goodall-kqyxlb` (name set by the cloud session) | — | Laptop: fresh dev run `dev-v2-20261104` | 4–5 Nov | **Code done in the cloud, 714 no-key tests pass (MCP off and on), mutation check done; PR open. v2 numbers pending** ([Eval v2 fixes](#eval-v2-fixes)) |
+| 5c | Live-server fix: streamed "tool choice is required" error; e2e report after an error | `claude/streamed-tool-choice-recovery` | — | Laptop: `langgraph dev` + `e2e` again | 4–5 Nov | **Code done in the cloud, 736 no-key tests pass, 10 new mutations caught; PR open** ([Streamed tool-choice error](#streamed-tool-choice-error)) |
 | 7 | README + demo video | `phase/7-show` | 3.5 | You record the video | 20–22 Nov | Not started |
 | | **Total** | | **30** | | | |
 
@@ -430,6 +432,34 @@ uv run python -m email_assistant.academy.safety_eval --run-id dev-v2-20261104
 ```
 
 Expect `714 passed` from pytest. The run writes `docs/agent/results/eval_dev-v2-20261104.{md,json,jsonl}` and leaves the v1 files alone. Compare the two tables; do not change `dev_messages.jsonl` between them. If the run stops on rate limits, run the same command again.
+
+---
+
+## Streamed tool-choice error
+
+Found in the live server (`langgraph dev`) after the eval v2 work: the owner approved `send_reply`, the calendar event and the outbox line were both written, and then the graph crashed at the closing `Done` step with `groq.APIError('Tool choice is required, but model did not call a tool')`. The remind-and-retry recovery in `models.py` did not catch it.
+
+| | |
+|---|---|
+| Cause | The recovery recognised the error by an HTTP status or by the `tool_use_failed` code. A **streamed** call gets the provider's error as an event inside the stream, so the SDK raises a plain `APIError(message)`: no `status_code`, `body` is `None`, no code. Checked against the installed `groq` 's `APIError` class. |
+| Fix | `models.is_streamed_no_tool_call(exc)`: the error, or one that caused it, is an `APIError` (by class name, so groq and openai both count) **and** its message contains the sentence. A different type that quotes the sentence, or an `APIError` with another message, does not count. It is part of `_is_model_mistake` (never waited on, also for triage and judge) and `tool_call_nudge` answers it with the usual "call a tool, or `Done`" reminder. Max 2 re-asks, nothing from the error in the reminder. |
+| Why re-asking is safe at the `Done` step | The reply and booking already ran after the owner's approval. Asking the model again runs no tool; if it asks for another write, that write goes to the owner for approval like any other. |
+| Test | `tests/unit/test_streamed_no_tool_call.py` builds the error as the SDK does, then runs the real graph with a model that is read **chunk by chunk** (`stream_mode="messages"`) and raises the error from inside the stream on the closing turn: the run finishes, the owner is asked once per write, one event, one outbox line. A twin test turns the recognition off and shows the old crash (event and outbox line written, run ends in the error). |
+| `e2e.py` | A run that ends in `error` or `timeout` now prints what was done before it ended: events found in the test calendar and new replies in the outbox, marked "NOT a pass"; exit code stays 1. A calendar that cannot be read is reported by error type only. No message or reply text, as before. `verify` shares the same reader. |
+| Mutation check | 10 new mutations (type not checked, message not checked, cause chain, wrong reminder, not a model mistake; report dropped, report counts as pass, calendar error stops the report, error text shown, old replies counted): **all caught**. `uv run python scripts/mutation_check.py streamed` and `... e2e`. |
+| Not verified here | A real streamed Groq call. The error object is built from the SDK class and the streaming path is a fake chat model, so the laptop run is the proof. |
+
+Laptop:
+
+```bash
+git fetch origin
+git checkout claude/streamed-tool-choice-recovery
+git pull
+uv sync --extra dev
+uv run pytest tests/unit -q
+```
+
+Expect `736 passed`. Then the live check: `uv run langgraph dev` in one terminal, `uv run python -m email_assistant.academy.e2e` in another, approve both requests in Studio.
 
 ---
 

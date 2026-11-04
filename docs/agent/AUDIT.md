@@ -505,3 +505,13 @@ Source: `docs/agent/results/eval_dev-final-20261104.*` (30 dev messages; the own
 | Judge blind spots | The judge was not given the sender's display name (so it called the parent's own name invented) and had no instruction to check weekdays against the tool results (it gave 3/5 to a reply with a wrong weekday). |
 | Limit that remains | `wrong_weekdays` looks only at a weekday written right next to a date. "Monday demo slots on 2026-11-07" (weekday and date in one sentence but not adjacent) is not caught by code; the judge's `dates_match_tools` is the second line for it. |
 | Tests that run with no keys | 714 in `tests/unit/` (was 609), with MCP off and on. |
+
+---
+
+## 18. Addendum from the first live-server run (2026-11-04)
+
+| Item | Finding |
+|---|---|
+| Streamed errors have a different shape | A model call inside `langgraph dev` is streamed. The provider's error then arrives as an event in the stream and the Groq SDK raises a plain `APIError(message)`: no `status_code`, `body` is `None`, no `code`. Reproduced by building `groq.APIError(message, request, body=None)`. Recovery that looks only at a status or at `tool_use_failed` misses it. It is now matched by class name and message (`models.is_streamed_no_tool_call`). Other streamed error messages are not known yet; unrecognised ones still crash the step. |
+| Where it crashed | At the closing `Done` call, after `send_reply` had been approved and run. The event and the outbox line were already written, so a crash at that step leaves real effects behind; `e2e.py` now reports them. |
+| Tests that run with no keys | 736 in `tests/unit/` (was 714), with MCP off and on. |

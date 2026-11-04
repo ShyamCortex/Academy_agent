@@ -7,6 +7,10 @@ The command sends the sample message `SAMPLE-04` (a `book_demo` message) to the 
 waits while you approve each step in LangGraph Studio. When the run ends it checks two things:
 the demo event is in the TEST calendar, and the reply is in the local outbox file.
 
+If the run ends in an error (or you stop approving and it times out), it still looks at both and says what was
+done before it ended: an approved booking and an approved reply are real even when a later step fails. That report
+is never a pass: the exit code stays 1.
+
 It prints action names only, never message text (hard rule 5).
 """
 
@@ -79,18 +83,49 @@ def parent_address(message: Message) -> str:
     return parseaddr(message.sender)[1]
 
 
+def look(message: Message, child_first_name: str, outbox_before: int) -> tuple[int, list | None, str | None]:
+    """What the run left behind: (new replies to the parent, demo events found or None, the error type if the calendar could not be read).
+
+    Never raises: this is also used after a run that ended in an error, when the report must still be given.
+    """
+    address = parent_address(message)
+    queued = len([r for r in read_outbox()[outbox_before:] if r.get("to") == address])
+    try:
+        return queued, get_calendar().find_demos(address, child_first_name, dates.now_ist()), None
+    except Exception as exc:  # noqa: BLE001 - only the type is shown; the text may hold addresses
+        return queued, None, type(exc).__name__
+
+
+def describe(queued: int, events: list | None, calendar_error: str | None) -> tuple[str, str]:
+    """The two result lines, without PASS or FAIL: the reply in the outbox, the event in the calendar."""
+    outbox_line = f"reply in the outbox ({outbox_path()}): {queued} new reply to the parent"
+    if events is None:
+        return outbox_line, f"demo event in the test calendar: could not be checked ({calendar_error})"
+    when = dates.iso_minutes(events[0].start) if events else "-"
+    return outbox_line, f"demo event in the test calendar: {len(events)} found, start {when}"
+
+
 def verify(message: Message, child_first_name: str, outbox_before: int, say: Callable[[str], None] = print) -> bool:
     """Check the two results. Prints PASS or FAIL for each and returns True only if both pass."""
-    address = parent_address(message)
-    queued = [r for r in read_outbox()[outbox_before:] if r.get("to") == address]
-    ok_outbox = bool(queued)
-    say(f"{'PASS' if ok_outbox else 'FAIL'}  reply in the outbox ({outbox_path()}): {len(queued)} new reply to the parent")
-
-    events = get_calendar().find_demos(address, child_first_name, dates.now_ist())
-    ok_calendar = len(events) == 1
-    when = dates.iso_minutes(events[0].start) if events else "-"
-    say(f"{'PASS' if ok_calendar else 'FAIL'}  demo event in the test calendar: {len(events)} found, start {when}")
+    queued, events, calendar_error = look(message, child_first_name, outbox_before)
+    outbox_line, calendar_line = describe(queued, events, calendar_error)
+    ok_outbox, ok_calendar = bool(queued), events is not None and len(events) == 1
+    say(f"{'PASS' if ok_outbox else 'FAIL'}  {outbox_line}")
+    say(f"{'PASS' if ok_calendar else 'FAIL'}  {calendar_line}")
     return ok_outbox and ok_calendar
+
+
+def report_unfinished(message: Message, child_first_name: str, outbox_before: int, outcome: str, say: Callable[[str], None] = print) -> None:
+    """The run did not finish ("error" or "timeout"): say what had been done by then. Not a pass or a fail of the two results."""
+    queued, events, calendar_error = look(message, child_first_name, outbox_before)
+    outbox_line, calendar_line = describe(queued, events, calendar_error)
+    say(f"The run ended with: {outcome}. What was done before it ended (this is NOT a pass):")
+    say(f"  - {calendar_line}")
+    say(f"  - {outbox_line}")
+    if outcome == "error":
+        say("  Approved steps are real even though a later step failed. Read the error in the `langgraph dev` terminal.")
+    else:
+        say("  Steps you have not approved yet have not happened.")
 
 
 def run(args: argparse.Namespace, client: Any | None = None, say: Callable[[str], None] = print) -> int:
@@ -128,7 +163,7 @@ def run(args: argparse.Namespace, client: Any | None = None, say: Callable[[str]
 
     outcome = wait_for_finish(client, thread_id, timeout=args.timeout, say=say)
     if outcome != "idle":
-        say(f"The run ended with: {outcome}. Nothing was checked.")
+        report_unfinished(message, args.child, outbox_before, outcome, say)
         return 1
     say("The run is finished. Checking the results:")
     return 0 if verify(message, args.child, outbox_before, say) else 1

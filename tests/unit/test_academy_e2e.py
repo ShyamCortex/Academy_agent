@@ -202,3 +202,91 @@ def test_run_refuses_a_sample_that_is_not_a_booking(academy_world, monkeypatch, 
 def test_the_parent_address_is_read_from_the_sender(sender, address):
     from dataclasses import replace
     assert e2e.parent_address(replace(SAMPLE, sender=sender)) == address
+
+
+# ---- a run that ends in an error still reports what was done ----------------------------------------------------------
+
+def live_run(academy_world, statuses, interrupts=None):
+    """A pretend server whose run does what the live one did before its closing step crashed: the event is put in the
+    calendar and the approved reply is written to the outbox while the run is going (so both count as new)."""
+    server = FakeServer(statuses, interrupts)
+    original_join = server.runs.join
+
+    def join(thread_id, run_id):
+        academy_world.calendar.create_demo("Demo class - Arjun", dates.parse_local_datetime("2026-11-07T10:00"),
+                                           dates.parse_local_datetime("2026-11-07T10:45"), PARENT, "Arjun")
+        academy_world.outbox.write_text(json.dumps({"to": PARENT, "subject": "s", "body": "private reply words"}) + "\n")
+        return original_join(thread_id, run_id)
+
+    server.runs.join = join
+    return server
+
+
+def test_a_run_that_ends_in_an_error_still_reports_the_event_and_the_outbox_line(academy_world, monkeypatch, tmp_path):
+    ready(monkeypatch, tmp_path)
+    monkeypatch.setattr(e2e.time, "sleep", lambda s: None)
+    said = []
+    assert e2e.run(args(), client=live_run(academy_world, ["interrupted", "error"], INTERRUPT), say=said.append) == 1     # still not a pass
+    text = "\n".join(said)
+    assert "The run ended with: error" in text and "NOT a pass" in text
+    assert "demo event in the test calendar: 1 found, start 2026-11-07T10:00" in text
+    assert "1 new reply to the parent" in text
+    assert "Approved steps are real" in text and "langgraph dev" in text
+    assert not any(line.startswith(("PASS", "FAIL")) for line in said)             # it is a report, not the two checks
+    assert "private reply words" not in text and "Hello, my son" not in text       # no message or reply text
+
+
+def test_an_error_before_anything_was_done_says_so(academy_world, monkeypatch, tmp_path):
+    ready(monkeypatch, tmp_path)
+    monkeypatch.setattr(e2e.time, "sleep", lambda s: None)
+    said = []
+    assert e2e.run(args(), client=FakeServer(["error"]), say=said.append) == 1
+    text = "\n".join(said)
+    assert "0 found" in text and "0 new reply" in text
+
+
+def test_replies_from_before_the_run_are_not_reported_as_done_by_it(academy_world, monkeypatch, tmp_path):
+    ready(monkeypatch, tmp_path)
+    academy_world.outbox.write_text(json.dumps({"to": PARENT, "subject": "old", "body": "old"}) + "\n")
+    monkeypatch.setattr(e2e.time, "sleep", lambda s: None)
+    said = []
+    e2e.run(args(), client=FakeServer(["error"]), say=said.append)
+    assert "0 new reply" in "\n".join(said)
+
+
+def test_a_timeout_reports_too_and_says_unapproved_steps_have_not_happened(academy_world, monkeypatch, tmp_path):
+    ready(monkeypatch, tmp_path)
+    academy_world.calendar.create_demo("Demo class - Arjun", dates.parse_local_datetime("2026-11-07T10:00"),
+                                       dates.parse_local_datetime("2026-11-07T10:45"), PARENT, "Arjun")
+    said = []
+    assert e2e.run(args(timeout=0), client=FakeServer(["interrupted"], INTERRUPT), say=said.append) == 1
+    text = "\n".join(said)
+    assert "The run ended with: timeout" in text and "1 found" in text and "0 new reply" in text and "have not happened" in text
+
+
+def test_a_calendar_that_cannot_be_read_does_not_hide_the_rest_of_the_report(academy_world, monkeypatch, tmp_path):
+    from email_assistant.academy.calendar_backend import CalendarError, FakeCalendar, use_calendar
+
+    ready(monkeypatch, tmp_path)
+    academy_world.outbox.write_text(json.dumps({"to": PARENT, "subject": "s", "body": "b"}) + "\n")
+
+    class Broken(FakeCalendar):
+        def find_demos(self, *a, **k):
+            raise CalendarError(f"token for {PARENT} expired")
+
+    monkeypatch.setattr(e2e.time, "sleep", lambda s: None)
+    said = []
+    with use_calendar(Broken()):
+        assert e2e.run(args(), client=FakeServer(["error"]), say=said.append) == 1
+        assert e2e.verify(SAMPLE, "Arjun", 0, said.append) is False
+    text = "\n".join(said)
+    assert "could not be checked (CalendarError)" in text and "1 new reply to the parent" in text
+    assert PARENT not in text and "expired" not in text                              # only the error type is shown
+
+
+def test_a_normal_finish_still_prints_pass_and_fail_lines(academy_world, monkeypatch, tmp_path):
+    ready(monkeypatch, tmp_path)
+    monkeypatch.setattr(e2e.time, "sleep", lambda s: None)
+    said = []
+    assert e2e.run(args(), client=live_run(academy_world, ["interrupted", "idle"], INTERRUPT), say=said.append) == 0
+    assert [line[:4] for line in said if line.startswith(("PASS", "FAIL"))] == ["PASS", "PASS"] and "NOT a pass" not in "\n".join(said)

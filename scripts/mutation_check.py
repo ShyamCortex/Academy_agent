@@ -1,4 +1,4 @@
-"""Mutation check for the weekday/date safety checks (docs/agent/PLAN.md, "Eval v2 fixes").
+"""Mutation check for the weekday/date checks, the model-error recovery and the e2e report (docs/agent/PLAN.md, "Eval v2 fixes" and "Streamed tool-choice error").
 
 A test that cannot fail proves nothing. This script breaks the checks on purpose, one small change at a time, and runs the
 no-key unit tests. A change that the tests do NOT notice is a "survivor": a check with no test that really depends on it.
@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ACADEMY = "src/email_assistant/academy/"
 G, C, S, J, P = (ACADEMY + name for name in ("grounding.py", "calendar_tools.py", "eval_scorers.py", "judge.py", "prompts.py"))
 M = "src/email_assistant/models.py"
+E = ACADEMY + "e2e.py"
 SE = ACADEMY + "safety_eval.py"
 
 # (name, file, old text, new text, how many times each `old` occurs). Each breaks one thing the new checks rely on.
@@ -79,6 +80,25 @@ MUTATIONS = [
     ("models: structured output gets no reminder for it", M, "return reminder if _is_model_mistake(exc) else None", 'return reminder if "tool_use_failed" in str(exc).lower() else None', 1),
     ("models: the reminder repeats the error text", M, "return NUDGE_UNREADABLE if _is_model_mistake(exc) else None", "return NUDGE_UNREADABLE + str(exc) if _is_model_mistake(exc) else None", 1),
     ("models: no limit on re-asking", M, "MAX_NUDGES = 2", "MAX_NUDGES = 50", 1),
+    # --- the streamed form of "tool choice is required" (a plain APIError with no status and no code)
+    ("streamed: the error type is not checked", M, 'if any(cls.__name__ == "APIError" for cls in type(exc).__mro__) and STREAMED_NO_TOOL_TEXT in str(exc).lower():',
+     "if STREAMED_NO_TOOL_TEXT in str(exc).lower():", 1),
+    ("streamed: the message is not checked", M, 'if any(cls.__name__ == "APIError" for cls in type(exc).__mro__) and STREAMED_NO_TOOL_TEXT in str(exc).lower():',
+     'if any(cls.__name__ == "APIError" for cls in type(exc).__mro__):', 1),
+    ("streamed: the error that caused it is not looked at", M, "        exc = exc.__cause__ or exc.__context__\n    return False\n\n\ndef _is_model_mistake",
+     "        break\n    return False\n\n\ndef _is_model_mistake", 1),
+    ("streamed: the agent gets the wrong reminder", M, "if isinstance(exc, NoToolCallError) or is_streamed_no_tool_call(exc):", "if isinstance(exc, NoToolCallError):", 1),
+    ("streamed: not counted as a model mistake (structured output, waiting)", M, " or error_code(exc) in MODEL_MISTAKE_CODES or is_streamed_no_tool_call(exc)",
+     " or error_code(exc) in MODEL_MISTAKE_CODES", 1),
+    # --- e2e: report what was done even when the run ends in an error
+    ("e2e: an unfinished run is not reported", E, "        report_unfinished(message, args.child, outbox_before, outcome, say)\n        return 1",
+     '        say(f"The run ended with: {outcome}. Nothing was checked.")\n        return 1', 1),
+    ("e2e: an unfinished run counts as a pass", E, "        report_unfinished(message, args.child, outbox_before, outcome, say)\n        return 1",
+     "        report_unfinished(message, args.child, outbox_before, outcome, say)\n        return 0", 1),
+    ("e2e: a calendar error stops the report", E, "    except Exception as exc:  # noqa: BLE001 - only the type is shown; the text may hold addresses\n        return queued, None, type(exc).__name__",
+     "    except KeyError as exc:  # noqa: BLE001\n        return queued, None, type(exc).__name__", 1),
+    ("e2e: the calendar error text is shown", E, "return queued, None, type(exc).__name__", "return queued, None, str(exc)", 1),
+    ("e2e: replies from before the run are counted", E, "read_outbox()[outbox_before:]", "read_outbox()", 1),
     # --- prompts (a presence test only: it shows the rule cannot be dropped by accident, not that the model obeys it)
     ("prompt: 'say it is unavailable' allowed", P, "do not say it is unavailable", "it is fine to say it is unavailable", 1),
     # The rule is written twice (the Today section and rule 2), so breaking only one proves nothing: both are changed.
