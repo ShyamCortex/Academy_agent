@@ -1,0 +1,171 @@
+{
+  "meta": {
+    "run_id": "dev-20261104",
+    "heldout": false,
+    "date": "2026-11-04 16:47",
+    "dataset": "data\\eval\\sample_messages.jsonl",
+    "has_samples": true,
+    "calendar": "fake",
+    "my_scores": "data\\eval\\my_scores.jsonl",
+    "forced": false,
+    "models": {
+      "triage": "groq:openai/gpt-oss-20b",
+      "agent": "groq:openai/gpt-oss-120b",
+      "judge": "groq:qwen/qwen3.8-27b"
+    }
+  },
+  "summary": {
+    "n_messages": 2,
+    "n_scored": 2,
+    "n_errors": 0,
+    "triage": {
+      "total": 2,
+      "correct": 2,
+      "accuracy": 1.0,
+      "errors": 0,
+      "per_label": {
+        "book_demo": {
+          "n": 1,
+          "correct": 1,
+          "accuracy": 1.0
+        },
+        "fees_plans": {
+          "n": 1,
+          "correct": 1,
+          "accuracy": 1.0
+        }
+      },
+      "confusions": [],
+      "per_language": {
+        "en": {
+          "n": 1,
+          "correct": 1,
+          "accuracy": 1.0
+        },
+        "tenglish": {
+          "n": 1,
+          "correct": 1,
+          "accuracy": 1.0
+        }
+      }
+    },
+    "sensitive": {
+      "n": 0,
+      "recall": null,
+      "missed_ids": [],
+      "never_drafted": null,
+      "drafted_ids": [],
+      "precision": null,
+      "over_escalated_ids": []
+    },
+    "numbers": {
+      "drafts_checked": 2,
+      "clean": 1,
+      "rate": 0.5,
+      "offenders": [
+        {
+          "id": "SAMPLE-02",
+          "numbers": [
+            "1",
+            "2"
+          ]
+        }
+      ]
+    },
+    "tools": {
+      "n": 2,
+      "passed": 2,
+      "rate": 1.0,
+      "n_correct_triage": 2,
+      "rate_given_correct_triage": 1.0,
+      "failed_ids": [],
+      "missing": {},
+      "unexpected_writes": {},
+      "bad_slot_ids": [],
+      "wrong_recipient_ids": [],
+      "messages_with_tool_errors": 0
+    },
+    "quality": {
+      "n_judged": 0,
+      "n_waiting": 2,
+      "mean": null,
+      "distribution": {
+        "1": 0,
+        "2": 0,
+        "3": 0,
+        "4": 0,
+        "5": 0
+      },
+      "good_enough": null,
+      "must_include_met": null,
+      "must_not_say_violated_ids": [],
+      "chess_advice_ids": [],
+      "no_chess_teaching": null
+    },
+    "agreement": null,
+    "targets": [
+      {
+        "name": "sensitive_recall",
+        "target": 1.0,
+        "value": null,
+        "met": null
+      },
+      {
+        "name": "sensitive_never_drafted",
+        "target": 1.0,
+        "value": null,
+        "met": null
+      },
+      {
+        "name": "numbers_grounded",
+        "target": 1.0,
+        "value": 0.5,
+        "met": false
+      },
+      {
+        "name": "no_chess_teaching",
+        "target": 0.95,
+        "value": null,
+        "met": null
+      }
+    ],
+    "usage": {
+      "per_role": {
+        "triage": {
+          "calls": 2,
+          "input_tokens": 1383,
+          "output_tokens": 300
+        },
+        "agent": {
+          "calls": 8,
+          "input_tokens": 14636,
+          "output_tokens": 1985
+        },
+        "judge": {
+          "calls": 0,
+          "input_tokens": 0,
+          "output_tokens": 0
+        }
+      },
+      "total_usd": null,
+      "usd_per_message": null,
+      "tokens_per_message": 9152.0
+    },
+    "latency": {
+      "run_seconds": {
+        "n": 2,
+        "mean": 48.326499999999996,
+        "p50": 46.976,
+        "p95": 49.677,
+        "max": 49.677
+      },
+      "judge_seconds": {
+        "n": 0,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "max": null
+      }
+    }
+  }
+}
