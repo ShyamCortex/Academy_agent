@@ -2,13 +2,16 @@
 
 import json
 
+import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
 
 from academy_helpers import triage_says
+from email_assistant.academy import dates
+from email_assistant.academy.calendar_backend import FakeCalendar
 from email_assistant.academy.dataset import Message
-from email_assistant.academy.eval_harness import QUESTION_ANSWER, UsageTracker, run_message, scripted_owner
+from email_assistant.academy.eval_harness import QUESTION_ANSWER, UsageTracker, next_slot_start, run_message, scripted_owner, seed_calendar
 from email_assistant.academy.graph import build_graph
 from email_assistant.models import use_fake_models
 from fakes import ScriptedModel, tool_call_message
@@ -144,3 +147,87 @@ def test_tokens_are_counted_per_role_from_the_wrapper_names(academy_world):
 
 def test_a_tracker_with_no_model_calls_is_empty():
     assert UsageTracker().snapshot() == {}
+
+
+# ---- the calendar: fake and seeded by default, real only on request ---------------------------------
+
+DEMO = {"child_first_name": "Arjun", "weekday": "Saturday", "time": "10:00"}
+
+
+def reschedule_row(**kw) -> Message:
+    return message("reschedule_cancel", id="R-1", existing_demo=DEMO, **kw)
+
+
+def test_a_message_with_an_existing_demo_gets_that_booking_in_a_fresh_fake_calendar(academy_world):
+    calendar = seed_calendar(reschedule_row())
+    assert isinstance(calendar, FakeCalendar) and calendar.calls == []     # the seeding is not the agent's doing
+    (found,) = calendar.find_demos("parent.a@example.invalid", "Arjun", academy_world.now)
+    assert dates.iso_minutes(found.start) == "2026-11-07T10:00" and dates.iso_minutes(found.end) == "2026-11-07T10:45"
+    assert calendar.find_demos("someone.else@example.invalid", "Arjun", academy_world.now) == []      # only for the sender
+    assert calendar.find_demos("parent.a@example.invalid", "Ria", academy_world.now) == []            # only for that child
+
+
+def test_a_message_without_one_gets_an_empty_calendar(academy_world):
+    assert seed_calendar(message()).events == {}
+
+
+def test_the_seed_is_the_same_every_time_and_the_calendars_are_separate(academy_world):
+    first, second = seed_calendar(reschedule_row()), seed_calendar(reschedule_row())
+    assert first is not second and list(first.events.values()) == list(second.events.values())
+    first.events.clear()
+    assert len(second.events) == 1
+
+
+@pytest.mark.parametrize("now,weekday,hhmm,expected", [
+    ("2026-11-04T10:00", "Saturday", "10:00", "2026-11-07T10:00"),
+    ("2026-11-04T10:00", "Wednesday", "17:00", "2026-11-04T17:00"),     # today, still ahead
+    ("2026-11-04T18:00", "Wednesday", "17:00", "2026-11-11T17:00"),     # today, already gone: next week
+    ("2026-11-07T10:00", "Saturday", "10:00", "2026-11-14T10:00"),      # exactly now is not in the future
+    ("2026-11-08T09:00", "Monday", "18:00", "2026-11-09T18:00"),
+])
+def test_the_booking_is_the_next_future_occurrence_of_that_weekday_and_time(monkeypatch, now, weekday, hhmm, expected):
+    monkeypatch.setattr(dates, "now_ist", lambda: dates.parse_local_datetime(now))
+    assert dates.iso_minutes(next_slot_start(weekday, hhmm)) == expected
+
+
+def run_script(row: Message, *calls, label="reschedule_cancel", **kw):
+    agent = ScriptedModel(*calls, tool_call_message("Done", done=True))
+    with use_fake_models(triage=triage_says(label), agent=agent):
+        return run_message(build_graph(), row, **kw)
+
+
+def test_a_reschedule_row_can_actually_be_rescheduled(academy_world):
+    trace = run_script(reschedule_row(),
+                       tool_call_message("find_demo_slots", date_from="2026-11-04", date_to="2026-11-10"),
+                       tool_call_message("reschedule_demo", parent_email="parent.a@example.invalid", child_first_name="Arjun",
+                                         new_start="2026-11-09T17:00", new_end="2026-11-09T17:45"))
+    moved = json.loads(trace.outputs[-1][1])
+    assert moved["rescheduled"] is True and moved["old_start"] == "2026-11-07T10:00" and moved["start"] == "2026-11-09T17:00"
+    assert "2026-11-07T10:00" not in json.loads(trace.outputs[0][1])["free_slots"]       # the booked slot is not offered to anyone
+
+
+def test_a_cancel_row_can_actually_be_cancelled_and_without_the_seed_it_could_not(academy_world):
+    cancel = tool_call_message("cancel_demo", parent_email="parent.a@example.invalid", child_first_name="Arjun")
+    assert json.loads(run_script(reschedule_row(), cancel).outputs[-1][1])["cancelled"] is True
+    plain = message("reschedule_cancel", id="R-2")                                       # same message, no existing_demo
+    cancel_again = tool_call_message("cancel_demo", parent_email="parent.a@example.invalid", child_first_name="Arjun")
+    result = json.loads(run_script(plain, cancel_again).outputs[-1][1])
+    assert result["cancelled"] is False and "No upcoming demo" in result["error"]
+
+
+def test_the_seeded_booking_never_reaches_the_calendar_the_settings_select(academy_world):
+    run_script(reschedule_row(), tool_call_message("cancel_demo", parent_email="parent.a@example.invalid", child_first_name="Arjun"))
+    assert academy_world.calendar.events == {} and academy_world.calendar.calls == []     # not touched at all
+
+
+def test_the_real_calendar_is_used_only_when_asked_and_nothing_is_seeded(academy_world):
+    """In the unit tests the 'real' calendar is academy_world.calendar, a stand-in installed by conftest."""
+    book = lambda: [  # noqa: E731
+        tool_call_message("find_demo_slots", date_from="2026-11-04", date_to="2026-11-10"),
+        tool_call_message("create_demo_event", parent_email="parent.a@example.invalid", child_first_name="Arjun", start=SLOT, end="2026-11-07T10:45")]
+    run_script(message("book_demo"), *book(), label="book_demo")
+    assert academy_world.calendar.events == {}                                           # default: fake, stand-in untouched
+    run_script(reschedule_row(), *book(), label="reschedule_cancel", real_calendar=True)
+    assert len(academy_world.calendar.events) == 1                                       # the booking went to the selected calendar
+    (event,) = academy_world.calendar.events.values()
+    assert event["start"] == dates.parse_local_datetime(SLOT)                            # only the agent's booking: the seed was skipped

@@ -23,7 +23,7 @@ uv sync --extra dev
 uv run pytest tests/unit -q
 ```
 
-Expect `525 passed`. Then once more with the read-only tools going through the MCP server (same tests, same result):
+Expect `571 passed`. Then once more with the read-only tools going through the MCP server (same tests, same result):
 
 ```bash
 $env:USE_MCP = "1"; uv run pytest tests/unit -q; Remove-Item Env:USE_MCP
@@ -108,7 +108,7 @@ uv run python -m email_assistant.academy.dataset data/eval/dev_messages.jsonl da
 ## 7. Run the dev evals
 
 Settings needed in `.env`: `TRIAGE_MODEL`, `AGENT_MODEL`, `JUDGE_MODEL` (a different model from `AGENT_MODEL`), the Supabase URL and anon key, `EMBEDDING_MODEL`, `GROQ_API_KEY`.
-No Google sign-in is needed: the eval uses a throwaway in-memory calendar and writes replies to `outbox/eval_outbox_<run-id>.jsonl`.
+No Google sign-in is needed: by default the eval uses a fake in-memory calendar (the same every run; a row's `existing_demo` booking is put in it first) and writes replies to `outbox/eval_outbox_<run-id>.jsonl`. Add `--real-calendar` only if you want real events in the Google test calendar.
 
 A small trial on the sample rows first (costs a few calls):
 

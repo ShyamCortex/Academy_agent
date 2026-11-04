@@ -95,7 +95,7 @@ def test_main_end_to_end_on_the_samples(tmp_path, monkeypatch, capsys):
     ids = iter(labels)
     assert ta.main([str(sample), "--out-dir", str(tmp_path / "out")], classify=lambda _m: labels[next(ids)]) == 0
     out = capsys.readouterr().out
-    assert "4/4 = 100%" in out and "Saved:" in out
+    assert "5/5 = 100%" in out and "Saved:" in out
     assert len(list((tmp_path / "out").glob("triage_accuracy_*.json"))) == 1
 
 

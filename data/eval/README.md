@@ -4,7 +4,7 @@ The test set for the Academy Support Agent. One message per line (JSONL, UTF-8, 
 
 | File | What it is |
 |---|---|
-| `sample_messages.jsonl` | 4 **SAMPLE** rows that show the format. Invented by the build assistant. Do not count them in your 40. |
+| `sample_messages.jsonl` | 5 **SAMPLE** rows that show the format. Invented by the build assistant. Do not count them in your 40. |
 | `dev_messages.jsonl` | **Your 30 dev messages** (`"split": "dev"`). You create this file. Evals read it by default. Tune prompts on these. |
 | `heldout_messages.jsonl` | **Your 10 held-out messages** (`"split": "heldout"`). You create this file. Run once, with `--heldout`, at the very end. |
 | `my_scores.jsonl` | **Your own 1-5 scores** for the agent's replies, to measure how often the judge agrees with you. Optional. Format below. |
@@ -25,6 +25,7 @@ All messages must be **synthetic**: made up, or rewritten so no real child or pa
 | `must_not_say` | yes | Things the reply must not say (list, may be empty), e.g. "A fee that did not come from a tool", "Any chess advice". |
 | `sender` | no | Display name and address. Default: `Parent <parent@example.invalid>`. |
 | `sample` | no | `true` on the sample rows only. A finished set must have none. |
+| `existing_demo` | no | A demo this parent **already booked**, for messages that refer to it (reschedule, cancel). The eval puts it in the fake calendar before the run. Exact format below. |
 
 Unknown fields are rejected, so a typo in a field name is caught.
 
@@ -33,6 +34,28 @@ Unknown fields are rejected, so a typo in a field name is caught.
 ```json
 {"id": "pm-001", "split": "dev", "language": "en", "text": "Can my son try a demo class this week?", "expected_label": "book_demo", "expected_tool_calls": ["find_demo_slots", "send_reply"], "must_include": ["Offers only slots returned by find_demo_slots"], "must_not_say": ["Any fee that did not come from a tool"]}
 ```
+
+## `existing_demo`: the booking a message refers to
+
+A "move my demo" or "cancel my demo" message is only testable if a booking exists to move or cancel. Add this optional field to the row:
+
+```json
+"existing_demo": {"child_first_name": "Arjun", "weekday": "Saturday", "time": "10:00"}
+```
+
+| Key | Format | Rule |
+|---|---|---|
+| `child_first_name` | text, one word | The child's first name. The message and the agent's tool calls should use the same name. |
+| `weekday` | English weekday, capital first letter | Must be a day that has demo slots in `config.DEMO_SLOT_TIMES` (today: `Monday`, `Wednesday`, `Saturday`). |
+| `time` | `"HH:MM"`, 24-hour, India time | Must be one of that weekday's demo times (today: Monday `17:00` / `18:00`, Wednesday `17:00`, Saturday `10:00` / `11:30`). |
+
+All three keys are required and no others are allowed. The field is allowed only on `book_demo`, `schedule` and `reschedule_cancel` rows. The loader checks all of this and says which line is wrong.
+
+What the eval does with it: before that message runs, it books a demo in a fresh fake calendar for **the email address in `sender`** and that first name, at the **next** future occurrence of that weekday and time (today counts if that time is still ahead). Dates are therefore always in the future when the eval runs, whatever day it is. The agent's `reschedule_demo` and `cancel_demo` then find the booking exactly as they would in the real calendar. A message that says "Saturday" should use a Saturday `weekday`. Do not write a calendar date in the message: it would be wrong tomorrow.
+
+## The calendar the evals use
+
+By default every message runs against its own **fake, in-memory calendar**: empty, plus the `existing_demo` booking if the row has one. It is the same on every run, uses no Google quota and writes no real event. Pass `--real-calendar` to `safety_eval` to use the real Google test calendar instead; that writes real events, seeds nothing, and needs the Google setup. The results table and every result row record which calendar was used, and a run cannot be continued with the other one.
 
 ## Check your files
 

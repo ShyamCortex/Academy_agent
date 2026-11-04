@@ -24,6 +24,8 @@ Everything else is in [Later](#later-not-in-the-22-nov-core).
 | 13 | **Phase 3 and Phase 5 are built together** on one branch. The build session wrote the FAQ (25 English + 5 Tenglish Q&As, facts only from `config.py`); you can replace it. | Shyam |
 | 14 | The FAQ search tool is `search_knowledge` (not `search_faq`). The allow-list now holds six read-only tools. | Shyam |
 | 15 | Held-out set is run only with `--heldout`, once; a second run needs `--force`. Dev and held-out messages live in two files (`dev_messages.jsonl`, `heldout_messages.jsonl`). | Shyam |
+| 16 | `create_demo_event` rejects, in code, any start that is not a demo slot (day and time from `config.DEMO_SLOT_TIMES`, exactly the demo length, free in the calendar). `reschedule_demo` does **not** have this check yet. | Shyam |
+| 17 | Evals use a seeded fake calendar by default; `--real-calendar` is opt-in. Optional dataset field `existing_demo`. | Shyam |
 
 ## Status
 
@@ -32,7 +34,7 @@ Everything else is in [Later](#later-not-in-the-22-nov-core).
 | 1a | Run on Gemini + Groq via env vars | `phase/1a-models` | 3 | API keys in `.env` | 3–5 Nov | **Done, merged** (PR #3). Laptop: `--ping` all PASS; upstream real tests 11/16 (see [Phase 1a results](#phase-1a-results-from-the-laptop)) |
 | 1 | Retarget: 7 labels, prompts, sensitive route, data format | `claude/phase-1a-test-failures-5bplly` (name set by the cloud session) | 5 | — | 6–8 Nov | **Done, merged** (PR #4). Laptop triage run: 3/3 on the 3 samples (`docs/agent/results/triage_accuracy_20261104_132258.json`). |
 | 2 | Real tools + approval + sensitive block in code | `claude/kind-bell-u63k9h` (name set by the cloud session; built together with Phase 4) | 8 | Test Supabase project + SQL files, Google test calendar + OAuth | 9–14 Nov | **Done, merged** (PR #5). Laptop steps in [`LAPTOP_SETUP.md`](LAPTOP_SETUP.md): result not recorded here yet |
-| 5 | Safety evals (core subset) | `claude/tender-johnson-kvwy6q` (name set by the cloud session; built together with Phase 3) | 5 | The 40 messages (dev 30 by 13 Nov) | 15–17 Nov | **Code done in the cloud, 525 no-key tests pass; PR open; runs on the sample rows only. Dev and held-out runs pending your 40 messages** ([`LAPTOP_RAG_EVALS.md`](LAPTOP_RAG_EVALS.md)) |
+| 5 | Safety evals (core subset) | `claude/tender-johnson-kvwy6q` (name set by the cloud session; built together with Phase 3) | 5 | The 40 messages (dev 30 by 13 Nov) | 15–17 Nov | **Code done in the cloud, 571 no-key tests pass; PR open; runs on the sample rows only. Dev and held-out runs pending your 40 messages** ([`LAPTOP_RAG_EVALS.md`](LAPTOP_RAG_EVALS.md)) |
 | 4 | Small MCP server (read-only) | same branch as Phase 2 | 2 | — | 18 Nov | **Done, merged** (PR #5). `search_knowledge` joined the server in Phase 3 |
 | 3 | Light RAG over the FAQ | same branch as Phase 5 | 3.5 | FAQ text by 17 Nov | 18–19 Nov | **Code done in the cloud (FAQ written by the build session, 30 Q&As); SQL, loader and recall@3 pending on the laptop** ([`LAPTOP_RAG_EVALS.md`](LAPTOP_RAG_EVALS.md)) |
 | 7 | README + demo video | `phase/7-show` | 3.5 | You record the video | 20–22 Nov | Not started |
@@ -334,7 +336,7 @@ Run it: [`LAPTOP_RAG_EVALS.md`](LAPTOP_RAG_EVALS.md) step 7 and 8. Files are in 
 
 Decisions:
 - **Scripted owner accepts everything** (and answers a `Question` with a fixed text, and ignores the sensitive notice). So the eval measures what the agent *proposes*; it does not measure owner edits.
-- **Safe by construction:** each message gets a fresh in-memory calendar (nothing reaches the Google test calendar); approved replies go to `outbox/eval_outbox_<run-id>.jsonl`; data lookups read the test Supabase project with the anon key.
+- **Safe by construction:** each message gets a fresh in-memory `FakeCalendar`, seeded the same way every run (nothing reaches Google; `--real-calendar` opts in, writes real events and seeds nothing; the table and every row record which was used, and a run cannot switch). A message with the optional `existing_demo` field gets that booking first, so reschedule and cancel rows are testable; approved replies go to `outbox/eval_outbox_<run-id>.jsonl`; data lookups read the test Supabase project with the anon key.
 - **The owner's canned answer to a `Question` is not evidence** for a number, and the parent's own numbers are not evidence either. Only tool outputs are. A draft that repeats the parent's number, for example a child's age, is flagged. This is strict on purpose, and the results list the numbers so you can see which ones.
 - **No message text and no reply text in `docs/agent/results/`.** The drafted replies and judge notes are in git-ignored `outbox/`, which is also what lets a reply that hit a judge rate limit be judged later without redoing the agent.
 - **Free-tier friendly:** batches of 5 with a 20 s pause (both settable), retry with backoff inside `models.py`, one row saved per message, resume by skipping scored ids, and 3 rate-limit failures in a row stop the run with the exact command to continue.

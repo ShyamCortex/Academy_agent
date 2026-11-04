@@ -17,6 +17,11 @@ Free tiers allow few requests, so a run is made to be stopped and continued:
 - after each message its row is saved; run the same command again and ids that are already scored are skipped;
 - three messages in a row failing on rate limits stops the run (exit code 2) and prints the resume command.
 
+Calendar: every message runs against its own in-memory FakeCalendar, the same every run, so a run never touches Google
+and uses no Google quota. A message with an `existing_demo` field has that booking put in first (see data/eval/README.md).
+--real-calendar uses the real Google test calendar instead (it needs the Google setup, writes real events, and seeds
+nothing). Each result row and the results table record which one was used, and a run cannot be continued with the other.
+
 Held-out rules:
 - held-out messages run only with --heldout, and dev messages never run with it (so the 10 stay unseen);
 - the first --heldout run is recorded in docs/agent/results/heldout_lock.json; another run is refused unless --force;
@@ -135,6 +140,21 @@ def check_heldout_lock(lock_path: Path, run_id: str, *, force: bool, unfinished:
 
 # ---- the run ---------------------------------------------------------------------------------------
 
+def calendar_mode(real_calendar: bool) -> str:
+    return "real" if real_calendar else "fake"
+
+
+def check_real_calendar_settings() -> None:
+    """--real-calendar needs the Google test calendar set up. Say what is missing instead of failing in the middle of a run."""
+    from email_assistant.academy import settings
+    from email_assistant.academy.calendar_backend import token_path
+
+    if not os.environ.get(settings.CALENDAR_ID_VAR, "").strip():
+        raise EvalRefused(f"--real-calendar needs {settings.CALENDAR_ID_VAR} (the TEST calendar's id) in .env. See docs/agent/LAPTOP_SETUP.md section B.")
+    if not token_path().exists():
+        raise EvalRefused(f"--real-calendar needs the saved Google sign-in {token_path()}. Run: uv run python -m email_assistant.academy.google_auth")
+
+
 def needs_judge(row: dict | None, judging: bool) -> bool:
     return bool(judging and row and row["status"] == "scored" and row["judge_status"] in ("pending", "skipped"))
 
@@ -159,7 +179,7 @@ def judge_one(message: Message, row: dict, store: PrivateStore, judge: JudgeFn) 
 def run_eval(
     messages: Sequence[Message], *, run_id: str, out_dir: Path, private_dir: Path, workflow=None, judging: bool = True,
     judge: JudgeFn = judge_reply, batch_size: int = 5, pause: float = 20.0, limit: int | None = None,
-    sleep: Callable[[float], None] = time.sleep, say: Callable[[str], None] = print,
+    real_calendar: bool = False, sleep: Callable[[float], None] = time.sleep, say: Callable[[str], None] = print,
 ) -> tuple[list[dict], bool]:
     """Score every message that still needs work, in batches. Returns (all rows, stopped_early)."""
     from email_assistant.academy.graph import build_graph
@@ -184,8 +204,9 @@ def run_eval(
             try:
                 lost_replies = needs_judge(row, judging) and store.get(message.id) is None  # local file was deleted: redo the agent stage
                 if row is None or row["status"] != "scored" or lost_replies:
-                    trace = run_message(workflow, message, run_id=run_id)
+                    trace = run_message(workflow, message, run_id=run_id, real_calendar=real_calendar)
                     row = score_trace(message, trace)
+                    row["calendar"] = calendar_mode(real_calendar)
                     store.put(message.id, drafts=trace.drafts(), outputs=[list(o) for o in trace.outputs])
                     if row["judge_status"] == "pending" and not judging:
                         row["judge_status"] = "skipped"
@@ -201,7 +222,7 @@ def run_eval(
                 limited = is_retryable(exc)
                 rate_limited_in_a_row = rate_limited_in_a_row + 1 if limited else 0
                 if row is None or row["status"] != "scored":
-                    row = error_row(message, exc)
+                    row = {**error_row(message, exc), "calendar": calendar_mode(real_calendar)}
                     append_row(path, row)
                     done[message.id] = row
                 say(f"  {message.id}: failed ({type(exc).__name__}){' - rate limit' if limited else ''}")
@@ -231,6 +252,8 @@ def render_markdown(summary: dict, meta: dict) -> str:
         f"- Dataset: `{meta['dataset']}`: {summary['n_messages']} messages, {summary['n_scored']} scored, {summary['n_errors']} failed to run"
         + (" **(includes SAMPLE rows, not the real 40)**" if meta["has_samples"] else ""),
         f"- Models: triage `{meta['models']['triage']}`, agent `{meta['models']['agent']}`, judge `{meta['models']['judge']}`",
+        ("- Calendar: **REAL Google test calendar** (real events were written; no existing bookings were seeded)" if meta["calendar"] == "real"
+         else "- Calendar: fake in-memory calendar, empty except for each message's `existing_demo` booking; the same on every run, no Google used"),
     ]
     if meta["heldout"]:
         lines.append("- Held-out set: look at these numbers once. Do not change prompts because of them." + (" **Forced re-run: the set is no longer unseen.**" if meta.get("forced") else ""))
@@ -335,6 +358,7 @@ def main(argv: Sequence[str] | None = None, *, workflow=None, judge: JudgeFn = j
     parser.add_argument("--batch-size", type=int, default=5, help="messages per batch (default 5)")
     parser.add_argument("--pause", type=float, default=20.0, help="seconds to wait between batches (default 20)")
     parser.add_argument("--limit", type=int, help="score at most this many messages now (a small trial run)")
+    parser.add_argument("--real-calendar", action="store_true", help="use the real Google test calendar instead of the fake one (writes real events; seeds nothing)")
     parser.add_argument("--no-judge", action="store_true", help="skip the judge (code scorers only); run again later without this flag to add it")
     parser.add_argument("--report-only", action="store_true", help="call no model; rebuild the summary and table from the saved rows")
     parser.add_argument("--my-scores", default=str(MY_SCORES_FILE), help="your scores for the judge-agreement number")
@@ -364,6 +388,12 @@ def main(argv: Sequence[str] | None = None, *, workflow=None, judge: JudgeFn = j
         run_id = args.run_id or default_run_id(args.heldout, again and args.force, started)
         existing = load_rows(rows_path(out_dir, run_id))
         unfinished = any(needs_work(existing.get(m.id), judging) for m in messages)
+        mode = calendar_mode(args.real_calendar)
+        other = {r.get("calendar", "fake") for r in existing.values()} - {mode}
+        if other:
+            raise EvalRefused(f"Run {run_id} was started with the {other.pop()} calendar, so it cannot be continued with the {mode} one. Use a new --run-id.")
+        if args.real_calendar and not args.report_only:
+            check_real_calendar_settings()
 
         if not args.report_only:
             # Check the model settings first: a held-out run must not be recorded if it cannot even start.
@@ -386,11 +416,14 @@ def main(argv: Sequence[str] | None = None, *, workflow=None, judge: JudgeFn = j
     if args.report_only:
         rows, stopped = [existing[m.id] for m in messages if m.id in existing], False
     else:
+        if args.real_calendar:
+            say("REAL CALENDAR: bookings the agent makes (the scripted owner accepts them) are written to the Google test calendar. No existing bookings are seeded.")
         # An eval must not touch the real outbox: approved replies go to an eval-only file.
         outbox = private_dir / f"eval_outbox_{run_id}.jsonl"
         with mock.patch.dict(os.environ, {settings.OUTBOX_FILE_VAR: str(outbox)}):
             rows, stopped = run_eval(messages, run_id=run_id, out_dir=out_dir, private_dir=private_dir, workflow=workflow, judging=judging,
-                                     judge=judge, batch_size=args.batch_size, pause=args.pause, limit=args.limit, sleep=sleep, say=say)
+                                     judge=judge, batch_size=args.batch_size, pause=args.pause, limit=args.limit,
+                                     real_calendar=args.real_calendar, sleep=sleep, say=say)
 
     by_id = {r["id"]: r for r in rows}
     missing = [m for m in messages if m.id not in by_id]
@@ -403,7 +436,7 @@ def main(argv: Sequence[str] | None = None, *, workflow=None, judge: JudgeFn = j
     summary = summarize(rows, agreement=agreement(judge_scores, mine))
     runs = read_lock(out_dir / "heldout_lock.json")["runs"] if args.heldout else []
     meta = {"run_id": run_id, "heldout": args.heldout, "date": clock().strftime("%Y-%m-%d %H:%M"), "dataset": str(dataset),
-            "has_samples": any(r.get("sample") for r in rows), "my_scores": args.my_scores, "forced": len(runs) > 1,
+            "has_samples": any(r.get("sample") for r in rows), "calendar": mode, "my_scores": args.my_scores, "forced": len(runs) > 1,
             "models": {role: os.environ.get(var, "") for role, var in (("triage", "TRIAGE_MODEL"), ("agent", "AGENT_MODEL"), ("judge", "JUDGE_MODEL"))}}
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"eval_{run_id}.json").write_text(json.dumps({"meta": meta, "summary": summary}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

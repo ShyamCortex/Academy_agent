@@ -24,7 +24,7 @@ def _write(tmp_path, *rows):
 
 def test_the_samples_are_valid_and_marked_sample():
     rows = load_messages(SAMPLES)
-    assert [r.id for r in rows] == ["SAMPLE-01", "SAMPLE-02", "SAMPLE-03", "SAMPLE-04"]
+    assert [r.id for r in rows] == ["SAMPLE-01", "SAMPLE-02", "SAMPLE-03", "SAMPLE-04", "SAMPLE-05"]
     assert all(r.sample for r in rows)
     assert {r.expected_label for r in rows} <= set(LABELS)
     assert "sensitive" in {r.expected_label for r in rows}
@@ -142,3 +142,43 @@ def test_an_id_in_both_files_and_a_mixed_file_are_reported(tmp_path):
     b.write_text(json.dumps({**GOOD, "id": "x"}) + "\n", encoding="utf-8")
     _, problems = check_files([str(a), str(b)])
     assert any("mixes dev and heldout" in p for p in problems) and any("'x' is in both" in p for p in problems)
+
+
+# ---- existing_demo: a booking to put in the fake calendar before the run ---------------------------
+
+DEMO = {"child_first_name": "Arjun", "weekday": "Saturday", "time": "10:00"}
+
+
+def test_existing_demo_is_optional_and_read(tmp_path):
+    plain, seeded = load_messages(_write(tmp_path, {**GOOD, "id": "a"}, {**GOOD, "id": "b", "expected_label": "reschedule_cancel", "existing_demo": DEMO}))
+    assert plain.existing_demo is None and seeded.existing_demo == DEMO
+
+
+def test_the_sample_reschedule_row_carries_a_booking_to_seed():
+    row = next(r for r in load_messages(SAMPLES) if r.id == "SAMPLE-05")
+    assert row.expected_label == "reschedule_cancel" and row.existing_demo == DEMO
+
+
+@pytest.mark.parametrize("value,message", [
+    ({**DEMO, "extra": "x"}, "exactly"),
+    ({"child_first_name": "Arjun", "weekday": "Saturday"}, "exactly"),
+    ("Saturday 10:00", "exactly"),
+    ({**DEMO, "child_first_name": "Arjun Kumar"}, "one first name"),
+    ({**DEMO, "child_first_name": "  "}, "one first name"),
+    ({**DEMO, "weekday": "saturday"}, "weekday"),
+    ({**DEMO, "weekday": "Tuesday"}, "weekday"),
+    ({**DEMO, "time": "10:30"}, "not a demo slot on Saturday"),
+    ({**DEMO, "time": "17:00"}, "not a demo slot on Saturday"),
+    ({**DEMO, "time": 10}, "text"),
+])
+def test_a_bad_existing_demo_is_rejected(tmp_path, value, message):
+    path = _write(tmp_path, {**GOOD, "expected_label": "reschedule_cancel", "existing_demo": value})
+    with pytest.raises(DatasetError, match=message):
+        load_messages(path)
+
+
+@pytest.mark.parametrize("label", ["sensitive", "ignore", "fees_plans", "workshop_tournament"])
+def test_existing_demo_is_refused_on_labels_that_have_no_booking(tmp_path, label):
+    path = _write(tmp_path, {**GOOD, "expected_label": label, "expected_tool_calls": [], "existing_demo": DEMO})
+    with pytest.raises(DatasetError, match="only for"):
+        load_messages(path)

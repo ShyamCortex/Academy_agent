@@ -9,8 +9,11 @@ The graph stops and waits for the owner at every send, every calendar change and
 
 If the agent keeps asking (more than MAX_REQUESTS stops) the run is cut off and marked unfinished.
 
-Safe by construction: each message gets a fresh in-memory calendar (nothing reaches the Google test calendar),
-and the CLI points the outbox at an eval-only file. Data lookups still read the test Supabase project (anon key).
+Calendar: by default every message gets its own fresh `FakeCalendar` (in memory, the same every run). Nothing
+reaches Google and no Google quota is used. If the message has an `existing_demo`, that booking is put in the fake
+calendar first (`seed_calendar`), so a reschedule or cancel message has something to move. With `real_calendar=True`
+(the CLI's --real-calendar) the real Google test calendar is used instead and nothing is seeded.
+The CLI also points the outbox at an eval-only file. Data lookups still read the test Supabase project (anon key).
 
 `UsageTracker` counts tokens per model role (triage, agent, judge) with a LangChain callback. It finds the role
 from the name of the wrapper in `models.py` (`triage_structured_...`, `agent_tools`, `judge_structured_...`), so it
@@ -20,6 +23,9 @@ does not depend on which model or provider is behind it.
 import time
 import uuid
 from collections import defaultdict
+from contextlib import nullcontext
+from datetime import datetime, timedelta
+from email.utils import parseaddr
 from typing import Any, Callable
 from uuid import UUID
 
@@ -29,6 +35,7 @@ from langgraph.graph import StateGraph
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
 
+from email_assistant.academy import config, dates
 from email_assistant.academy.calendar_backend import FakeCalendar, use_calendar
 from email_assistant.academy.dataset import Message
 from email_assistant.academy.eval_scorers import ROLES, SIGNAL_NAMES, ToolCall, Trace
@@ -93,6 +100,36 @@ class UsageTracker(BaseCallbackHandler):
         return {role: dict(counts) for role, counts in self.totals.items()}
 
 
+def next_slot_start(weekday: str, hhmm: str) -> datetime:
+    """The next time it is `weekday` at `hhmm` (India time), strictly after now. Today counts if that time is still ahead."""
+    now = dates.now_ist()
+    hour, minute = (int(part) for part in hhmm.split(":"))
+    for ahead in range(8):
+        day = now.date() + timedelta(days=ahead)
+        start = datetime(day.year, day.month, day.day, hour, minute, tzinfo=config.TIMEZONE)
+        if dates.weekday_name(day) == weekday and start > now:
+            return start
+    raise ValueError(f"No {weekday} {hhmm} found in the next week.")  # unreachable for a valid weekday
+
+
+def seed_calendar(message: Message) -> FakeCalendar:
+    """A fresh fake calendar. If the message names a demo the parent already booked, that booking is in it.
+
+    The booking is made the way the real tool stores it: for the sender's email address and the child's first name, so
+    `reschedule_demo` and `cancel_demo` find it by looking up those two. Nothing else is seeded, and nothing depends on
+    chance: the same message gives the same calendar on every run (only "today" moves, so dates move with it).
+    """
+    calendar = FakeCalendar()
+    booked = message.existing_demo
+    if booked:
+        start = next_slot_start(booked["weekday"], booked["time"])
+        first = booked["child_first_name"].strip()
+        calendar.create_demo(f"Demo class - {first}", start, start + timedelta(minutes=config.DEMO_CLASS_MINUTES),
+                             parseaddr(message.sender)[1], first)
+        calendar.calls.clear()  # the seeding is not something the agent did
+    return calendar
+
+
 def trace_from_state(values: dict, *, asked: list[str], seconds: float, usage: dict, finished: bool) -> Trace:
     """Read the finished graph state: the label, every tool call, and what each real tool returned."""
     trace = Trace(label=values.get("classification_decision"), asked=asked, seconds=seconds, usage=usage, finished=finished)
@@ -111,9 +148,12 @@ def trace_from_state(values: dict, *, asked: list[str], seconds: float, usage: d
 
 def run_message(
     workflow: StateGraph, message: Message, *, owner: Callable[[dict], dict] = scripted_owner,
-    run_id: str = "", max_requests: int = MAX_REQUESTS,
+    run_id: str = "", max_requests: int = MAX_REQUESTS, real_calendar: bool = False,
 ) -> Trace:
-    """Run one message from start to finish and return what happened. Exceptions (after retries) pass through."""
+    """Run one message from start to finish and return what happened. Exceptions (after retries) pass through.
+
+    Default: a fresh seeded fake calendar. `real_calendar=True`: whatever calendar the settings select (the Google test calendar).
+    """
     graph = workflow.compile(checkpointer=MemorySaver(), store=InMemoryStore())  # fresh memory for every message
     tracker = UsageTracker()
     config = {
@@ -124,7 +164,7 @@ def run_message(
     asked: list[str] = []
     finished = True
     started = time.perf_counter()
-    with use_calendar(FakeCalendar()):
+    with nullcontext() if real_calendar else use_calendar(seed_calendar(message)):
         result = graph.invoke({"message_input": message.graph_input()}, config)
         while result.get("__interrupt__"):
             if len(asked) >= max_requests:

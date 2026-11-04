@@ -320,3 +320,87 @@ def test_the_sample_rows_run_as_a_dev_run_and_the_table_says_they_are_samples(en
     dataset = write(env / "samples.jsonl", [row_for("SAMPLE-01", "book_demo", BOOK, sample=True)])
     _, _, out = cli(env, dataset, triage_script=["book_demo"], agent_script=drafting(), judge_script=[good_grade()])
     assert "includes SAMPLE rows" in (out / "eval_dev-20261104.md").read_text(encoding="utf-8")
+
+
+# ---- the calendar the eval uses --------------------------------------------------------------------
+
+RESCHEDULE_ROW = {**row_for("r1", "reschedule_cancel", ["find_demo_slots", "reschedule_demo", "send_reply"]),
+                  "existing_demo": {"child_first_name": "Arjun", "weekday": "Saturday", "time": "10:00"}}
+
+
+def reschedule_script():
+    return [tool_call_message("find_demo_slots", date_from="2026-11-04", date_to="2026-11-10"),
+            tool_call_message("reschedule_demo", parent_email="parent@example.invalid", child_first_name="Arjun",
+                              new_start="2026-11-09T17:00", new_end="2026-11-09T17:45"),
+            tool_call_message("send_reply", to="parent@example.invalid", subject="Moved", body="Moved to 9 Nov at 17:00."),
+            tool_call_message("Done", done=True)]
+
+
+def test_the_default_is_the_seeded_fake_calendar_and_the_results_say_so(env, academy_world):
+    dataset = write(env / "dev.jsonl", [RESCHEDULE_ROW])
+    code, output, out = cli(env, dataset, triage_script=["reschedule_cancel"], agent_script=reschedule_script(), judge_script=[good_grade()])
+    assert code == 0, output
+    assert "REAL CALENDAR" not in output
+    assert all(r["calendar"] == "fake" for r in saved_rows(out))
+    saved = json.loads((out / "eval_dev-20261104.json").read_text(encoding="utf-8"))
+    assert saved["meta"]["calendar"] == "fake"
+    table = (out / "eval_dev-20261104.md").read_text(encoding="utf-8")
+    assert "Calendar: fake in-memory calendar" in table and "REAL" not in table
+    assert saved["summary"]["tools"]["rate"] == 1.0           # the reschedule row passes because its booking was seeded
+    assert academy_world.calendar.events == {}                 # the calendar the settings select (Google, in real use) was never touched
+
+
+def test_without_the_seed_the_same_reschedule_message_fails_its_tool_check(env):
+    unseeded = {k: v for k, v in RESCHEDULE_ROW.items() if k != "existing_demo"}
+    dataset = write(env / "dev.jsonl", [unseeded])
+    _, _, out = cli(env, dataset, triage_script=["reschedule_cancel"], agent_script=reschedule_script(), judge_script=[good_grade()])
+    row = latest(out)["r1"]
+    outputs = json.loads((env / "private" / "eval_private_dev-20261104.json").read_text(encoding="utf-8"))["r1"]["outputs"]
+    assert any("No upcoming demo" in text for _, text in outputs) and row["tools"]["tool_errors"] == 1
+
+
+def test_real_calendar_is_refused_until_the_google_setup_exists(env, monkeypatch):
+    dataset = DEV(env)
+    monkeypatch.delenv("GOOGLE_CALENDAR_ID", raising=False)
+    code, output, _ = cli(env, dataset, "--real-calendar")
+    assert code == 1 and "GOOGLE_CALENDAR_ID" in output
+    monkeypatch.setenv("GOOGLE_CALENDAR_ID", "test-calendar@group.calendar.google.com")
+    monkeypatch.setenv("GOOGLE_TOKEN_FILE", str(env / "no-such-token.json"))
+    code, output, out = cli(env, dataset, "--real-calendar")
+    assert code == 1 and "no-such-token.json" in output and not (out / "eval_dev-20261104.jsonl").exists()
+
+
+def test_real_calendar_is_used_on_request_and_recorded(env, monkeypatch, academy_world):
+    token = env / "token.json"
+    token.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("GOOGLE_CALENDAR_ID", "test-calendar@group.calendar.google.com")
+    monkeypatch.setenv("GOOGLE_TOKEN_FILE", str(token))
+    booking = [tool_call_message("find_demo_slots", date_from="2026-11-04", date_to="2026-11-10"),
+               tool_call_message("create_demo_event", parent_email="parent@example.invalid", child_first_name="Arjun",
+                                 start="2026-11-07T10:00", end="2026-11-07T10:45"),
+               tool_call_message("send_reply", to="parent@example.invalid", subject="Booked", body="Booked for 7 Nov at 10:00."),
+               tool_call_message("Done", done=True)]
+    dataset = write(env / "dev.jsonl", [row_for("b1", "book_demo", ["find_demo_slots", "create_demo_event", "send_reply"])])
+    code, output, out = cli(env, dataset, "--real-calendar", triage_script=["book_demo"], agent_script=booking, judge_script=[good_grade()])
+    assert code == 0 and "REAL CALENDAR" in output
+    assert len(academy_world.calendar.events) == 1                                   # the booking reached the selected calendar
+    assert all(r["calendar"] == "real" for r in saved_rows(out))
+    table = (out / "eval_dev-20261104.md").read_text(encoding="utf-8")
+    assert "REAL Google test calendar" in table and json.loads((out / "eval_dev-20261104.json").read_text(encoding="utf-8"))["meta"]["calendar"] == "real"
+
+
+def test_a_run_cannot_be_continued_with_the_other_calendar(env, monkeypatch):
+    dataset = DEV(env)
+    cli(env, dataset, "--limit", "1", triage_script=["book_demo"], agent_script=drafting(), judge_script=[good_grade()])
+    token = env / "token.json"
+    token.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("GOOGLE_CALENDAR_ID", "test-calendar@group.calendar.google.com")
+    monkeypatch.setenv("GOOGLE_TOKEN_FILE", str(token))
+    code, output, _ = cli(env, dataset, "--real-calendar")
+    assert code == 1 and "started with the fake calendar" in output and "--run-id" in output
+
+
+def test_a_failed_message_also_records_the_calendar(env):
+    dataset = write(env / "dev.jsonl", [row_for("d1", "book_demo", BOOK)])
+    _, _, out = cli(env, dataset, triage_script=["book_demo"], agent_script=[ValueError("x")])
+    assert latest(out)["d1"]["status"] == "error" and latest(out)["d1"]["calendar"] == "fake"

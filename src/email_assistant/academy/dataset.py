@@ -9,6 +9,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from email_assistant.academy import config
 from email_assistant.academy.guards import SIGNAL_TOOLS
 from email_assistant.academy.schemas import LABELS
 from email_assistant.academy.tools import ACADEMY_TOOLS
@@ -19,7 +20,10 @@ LANGUAGES = ("en", "te", "tenglish")
 KNOWN_TOOLS = frozenset({t.name.lower() for t in ACADEMY_TOOLS}) | {n.lower() for n in SIGNAL_TOOLS}
 
 REQUIRED_FIELDS = ("id", "split", "language", "text", "expected_label", "expected_tool_calls", "must_include", "must_not_say")
-OPTIONAL_FIELDS = ("sender", "sample")
+OPTIONAL_FIELDS = ("sender", "sample", "existing_demo")
+EXISTING_DEMO_FIELDS = {"child_first_name", "weekday", "time"}
+# Labels where the parent can refer to a demo they already booked.
+BOOKING_LABELS = ("reschedule_cancel", "book_demo", "schedule")
 
 
 class DatasetError(ValueError):
@@ -38,10 +42,31 @@ class Message:
     must_not_say: list[str]
     sender: str = "Parent <parent@example.invalid>"
     sample: bool = False
+    # A demo this parent already booked, put in the eval's fake calendar before the run:
+    # {"child_first_name": "Arjun", "weekday": "Saturday", "time": "10:00"}. See data/eval/README.md.
+    existing_demo: dict | None = None
 
     def graph_input(self) -> dict:
         """The dict the graph takes as `message_input`."""
         return {"from": self.sender, "text": self.text}
+
+
+def _check_existing_demo(value: object, label: str, where: str) -> None:
+    """The booking to seed: exactly child_first_name, weekday and time, and the time must be a real demo slot."""
+    if label not in BOOKING_LABELS:
+        raise DatasetError(f"{where}: 'existing_demo' is only for {BOOKING_LABELS} messages, not {label!r}.")
+    if not isinstance(value, dict) or set(value) != EXISTING_DEMO_FIELDS:
+        raise DatasetError(f"{where}: 'existing_demo' must be an object with exactly {sorted(EXISTING_DEMO_FIELDS)}.")
+    if not all(isinstance(v, str) for v in value.values()):
+        raise DatasetError(f"{where}: every 'existing_demo' value must be text.")
+    name = value["child_first_name"].strip()
+    if not name or len(name.split()) != 1:
+        raise DatasetError(f"{where}: existing_demo.child_first_name must be one first name, for example \"Arjun\".")
+    times = config.DEMO_SLOT_TIMES.get(value["weekday"])
+    if times is None:
+        raise DatasetError(f"{where}: existing_demo.weekday {value['weekday']!r} must be one of {sorted(config.DEMO_SLOT_TIMES)} (English, capital first letter).")
+    if value["time"] not in times:
+        raise DatasetError(f"{where}: existing_demo.time {value['time']!r} is not a demo slot on {value['weekday']}. Use one of {times}.")
 
 
 def _check_row(row: object, where: str) -> Message:
@@ -71,6 +96,8 @@ def _check_row(row: object, where: str) -> Message:
         raise DatasetError(f"{where}: unknown tool(s) in expected_tool_calls: {bad_tools}. Use lower case: {sorted(KNOWN_TOOLS)}.")
     if row["expected_label"] in ("sensitive", "ignore") and row["expected_tool_calls"]:
         raise DatasetError(f"{where}: a {row['expected_label']!r} message must have expected_tool_calls = [].")
+    if "existing_demo" in row:
+        _check_existing_demo(row["existing_demo"], row["expected_label"], where)
     if "sender" in row and not isinstance(row["sender"], str):
         raise DatasetError(f"{where}: 'sender' must be a string.")
     if "sample" in row and not isinstance(row["sample"], bool):
