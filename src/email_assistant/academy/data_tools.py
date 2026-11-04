@@ -25,7 +25,7 @@ def _result(table: str, columns: str, **query: Any) -> str:
 
 @tool
 def get_plans() -> str:
-    """Get the fee plans: name, classes per month and monthly fee in rupees."""
+    """Get the fee plans: name, classes per month and monthly fee in rupees. Quote the numbers as they are: classes are per month, not per week."""
     return _result("plans", "name,classes_per_month,fee_rupees", filters={"active": "eq.true"}, order="fee_rupees.asc")
 
 

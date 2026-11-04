@@ -24,8 +24,10 @@ Everything else is in [Later](#later-not-in-the-22-nov-core).
 | 13 | **Phase 3 and Phase 5 are built together** on one branch. The build session wrote the FAQ (25 English + 5 Tenglish Q&As, facts only from `config.py`); you can replace it. | Shyam |
 | 14 | The FAQ search tool is `search_knowledge` (not `search_faq`). The allow-list now holds six read-only tools. | Shyam |
 | 15 | Held-out set is run only with `--heldout`, once; a second run needs `--force`. Dev and held-out messages live in two files (`dev_messages.jsonl`, `heldout_messages.jsonl`). | Shyam |
-| 16 | `create_demo_event` rejects, in code, any start that is not a demo slot (day and time from `config.DEMO_SLOT_TIMES`, exactly the demo length, free in the calendar). `reschedule_demo` does **not** have this check yet. | Shyam |
+| 16 | `create_demo_event` rejects, in code, any start that is not a demo slot (day and time from `config.DEMO_SLOT_TIMES`, exactly the demo length, free in the calendar). `reschedule_demo` now has the same check for `new_start` / `new_end` (branch `claude/vibrant-einstein-w3t96j`). | Shyam |
 | 17 | Evals use a seeded fake calendar by default; `--real-calendar` is opt-in. Optional dataset field `existing_demo`. | Shyam |
+| 18 | The judge recovers from Groq 400 `tool_use_failed` like the drafter does: `structured_llm` reminds the model and asks again, at most 2 times (also for no answer, or a value our checks refuse). `JudgeGrade.quality` is a plain `int`, checked to 1-5 in code (no enum in the schema). A failed message logs its stage, error type and the provider's error code, never the error text. | Shyam |
+| 19 | Replies quote plan numbers exactly as `get_plans` returns them (classes **per month**); the prompt forbids converting to per week or computing any new number. | Shyam |
 
 ## Status
 
@@ -343,6 +345,20 @@ Decisions:
 - **Held-out:** `--heldout` takes only held-out rows, a normal run refuses them. The first held-out run is written to `docs/agent/results/heldout_lock.json` (after the model settings are checked, so a run that cannot start is not recorded). A second run is refused unless `--force`; continuing an unfinished run with the same run id is allowed; `--report-only` reads the numbers again with no model call.
 - **Not done:** LangSmith `evaluate()` experiments. Each message's trace is still sent to LangSmith when tracing is on, tagged `academy-eval` with the message id (never the text). The second judge model for agreement is still under Later.
 - **Known limits of the number check:** digits only (no "four classes"); a date or time is matched alone, not with the facts around it; a bare `5:30` is accepted if the tools said 05:30 or 17:30.
+
+---
+
+### Phase 5 — first laptop trial and fixes (`claude/vibrant-einstein-w3t96j`, name set by the cloud session)
+
+Trial: `safety_eval` on the 2 sample rows, all three roles on Groq.
+
+| Finding | Cause | Fix |
+|---|---|---|
+| Every judge call failed with `BadRequestError` (judge `groq:qwen/qwen3.8-27b`), so no reply was judged | Likely a Groq 400 `tool_use_failed` on the judge's forced schema call. Not confirmed: the log kept only the type. `structured_llm` had no reminder-and-retry, and `quality` was a `Literal[1..5]` enum that Groq checks strictly | `structured_llm` gets the same reminder-and-retry as `tool_llm` (max 2); `quality` is a plain int checked in code; the log line now reads e.g. `judge failed (BadRequestError, code tool_use_failed)`; `model_check --ping` now tests the real `JudgeGrade` with the real judge prompt |
+| `SAMPLE-02` failed the number check with `1, 2` | The parent asked about classes per week; the reply most likely turned 8 a month into 2 a week | Prompt rule 6 and the `get_plans` description: quote numbers in the tool's own unit, never convert or compute |
+| (Open from Phase 3 + 5) `reschedule_demo` accepted any free time | Only `create_demo_event` had the demo-slot check | `reschedule_demo` uses the same `_not_a_demo_slot` check |
+
+No-key tests: 609 pass with MCP off and on (was 571). Laptop: `model_check --ping`, then re-run the 2-sample trial.
 
 ---
 

@@ -183,7 +183,7 @@ def run_eval(
 ) -> tuple[list[dict], bool]:
     """Score every message that still needs work, in batches. Returns (all rows, stopped_early)."""
     from email_assistant.academy.graph import build_graph
-    from email_assistant.models import is_retryable
+    from email_assistant.models import describe_error, is_retryable
 
     workflow = workflow or build_graph()
     path = rows_path(out_dir, run_id)
@@ -201,6 +201,7 @@ def run_eval(
             sleep(pause)
         for message in todo[start:start + batch_size]:
             row = done.get(message.id)
+            stage = "agent"
             try:
                 lost_replies = needs_judge(row, judging) and store.get(message.id) is None  # local file was deleted: redo the agent stage
                 if row is None or row["status"] != "scored" or lost_replies:
@@ -213,6 +214,7 @@ def run_eval(
                     append_row(path, row)
                     done[message.id] = row
                 if needs_judge(row, judging):
+                    stage = "judge"
                     row = judge_one(message, row, store, judge)
                     append_row(path, row)
                     done[message.id] = row
@@ -225,7 +227,8 @@ def run_eval(
                     row = {**error_row(message, exc), "calendar": calendar_mode(real_calendar)}
                     append_row(path, row)
                     done[message.id] = row
-                say(f"  {message.id}: failed ({type(exc).__name__}){' - rate limit' if limited else ''}")
+                # Type and provider code only (e.g. "BadRequestError, code tool_use_failed"): the text may quote the message.
+                say(f"  {message.id}: {stage} failed ({describe_error(exc)}){' - rate limit' if limited else ''}")
                 if rate_limited_in_a_row >= STOP_AFTER_RATE_LIMITS:
                     say(f"  {STOP_AFTER_RATE_LIMITS} rate-limit failures in a row: stopping. Run the same command later to continue.")
                     return [done[m.id] for m in messages if m.id in done], True
