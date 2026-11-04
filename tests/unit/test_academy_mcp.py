@@ -204,7 +204,7 @@ def test_writes_stay_in_process_and_wait_for_the_owner_when_mcp_is_on(academy_wo
 
 # ---- the real server as a child process ----------------------------------------------------------
 
-def test_the_child_process_gets_only_the_settings_it_needs(monkeypatch):
+def test_the_child_process_gets_only_the_settings_it_needs(monkeypatch, tmp_path):
     for name, value in {"GROQ_API_KEY": "gsk_secret", "LANGSMITH_API_KEY": "ls_secret", "GOOGLE_API_KEY": "g_secret",
                         settings.SUPABASE_URL_VAR: "https://x.supabase.co", settings.SUPABASE_ANON_KEY_VAR: "anon",
                         settings.CALENDAR_ID_VAR: "cal"}.items():
@@ -212,18 +212,74 @@ def test_the_child_process_gets_only_the_settings_it_needs(monkeypatch):
     target = stdio_target()
     assert set(target.env) == {settings.SUPABASE_URL_VAR, settings.SUPABASE_ANON_KEY_VAR, settings.CALENDAR_ID_VAR}
     assert set(target.env) <= set(SERVER_ENV_VARS) and "secret" not in str(target.env)
-    assert (target.command, target.args) == (sys.executable, ["-m", "email_assistant.academy.mcp_server"])
+    assert (target.command, target.args) == (sys.executable, ["-m", "email_assistant.academy.mcp_server", "--no-dotenv"])
     assert target.cwd == os.getcwd()
+    assert stdio_target(cwd=tmp_path).cwd == str(tmp_path)
 
 
-def test_the_real_server_runs_as_a_child_process_and_offers_the_same_tools():
-    client = McpReadClient(stdio_target(), timeout=60)
+DECOY_ENV = (
+    f"{settings.SUPABASE_URL_VAR}=https://decoy-never-call.invalid\n{settings.SUPABASE_ANON_KEY_VAR}=sb_publishable_decoy\n"
+    f"{settings.CALENDAR_ID_VAR}=decoy-calendar\nGROQ_API_KEY=gsk_decoy_not_real\n"
+)
+
+
+@pytest.fixture
+def isolated_child(monkeypatch, tmp_path):
+    """The conditions for a test that starts the real server: no academy setting in the environment, and an empty temp
+    folder as the working folder that holds a DECOY `.env`. A child that read it would use the decoy URL, so the test
+    would fail; nothing here points at a real project, so the test can never make a real network call, whatever
+    `.env` and shell variables the developer has."""
+    for name in SERVER_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    (tmp_path / ".env").write_text(DECOY_ENV, encoding="utf-8")
+    return tmp_path
+
+
+def start_child(folder, *, in_default_folder: bool, monkeypatch):
+    if in_default_folder:
+        monkeypatch.chdir(folder)           # the default target starts the child in the current folder
+        return stdio_target()
+    return stdio_target(cwd=folder)
+
+
+@pytest.mark.parametrize("in_default_folder", [False, True], ids=["cwd given", "cwd is the current folder"])
+def test_the_real_server_runs_as_a_child_process_and_offers_the_same_tools(isolated_child, monkeypatch, in_default_folder):
+    target = start_child(isolated_child, in_default_folder=in_default_folder, monkeypatch=monkeypatch)
+    assert target.env == {} and target.cwd == str(isolated_child)       # nothing handed over, and not the repo folder
+    client = McpReadClient(target, timeout=60)
     try:
         assert set(client.list_tool_names()) == set(READ_ONLY_TOOLS)
         with pytest.raises(McpError, match=settings.SUPABASE_URL_VAR):  # no settings in the child: a clear error comes back
             client.call("get_plans", {})
     finally:
         client.close()
+
+
+def test_the_child_sees_only_what_it_was_given_not_the_model_keys_in_the_environment(isolated_child, monkeypatch):
+    """The parent has model keys and other secrets in its environment; the child must not."""
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_in_the_parent")
+    monkeypatch.setenv("LANGSMITH_API_KEY", "ls_in_the_parent")
+    target = stdio_target(cwd=isolated_child)
+    assert target.env == {}                                              # the SDK adds only its short safe list (PATH, HOME, ...)
+    from mcp.client.stdio import get_default_environment
+
+    assert "GROQ_API_KEY" not in get_default_environment() and "LANGSMITH_API_KEY" not in get_default_environment()
+
+
+def test_the_server_reads_dotenv_when_started_by_hand_but_not_with_no_dotenv(monkeypatch):
+    calls = []
+
+    class Stopped:
+        def run(self, transport):
+            calls.append(("run", transport))
+
+    monkeypatch.setattr(mcp_server, "load_dotenv", lambda *a, **k: calls.append(("dotenv", a)))
+    monkeypatch.setattr(mcp_server, "build_server", lambda: Stopped())
+    mcp_server.main([])
+    assert calls == [("dotenv", (".env",)), ("run", "stdio")]
+    calls.clear()
+    mcp_server.main(["--no-dotenv"])
+    assert calls == [("run", "stdio")]
 
 
 def test_a_server_that_cannot_start_gives_an_error_not_a_hang():

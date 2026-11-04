@@ -184,7 +184,7 @@ def run_eval(
 ) -> tuple[list[dict], bool]:
     """Score every message that still needs work, in batches. Returns (all rows, stopped_early)."""
     from email_assistant.academy.graph import build_graph
-    from email_assistant.models import describe_error, is_retryable
+    from email_assistant.models import describe_error, describe_rate_limit, is_retryable, rate_limit_details
 
     workflow = workflow or build_graph()
     path = rows_path(out_dir, run_id)
@@ -196,6 +196,7 @@ def run_eval(
         todo = todo[:limit]
 
     rate_limited_in_a_row = 0
+    last_limit: str | None = None  # which limit the provider named last, and when to try again (never any message text)
     for start in range(0, len(todo), batch_size):
         if start:
             say(f"  pause {pause:g}s before the next batch of {batch_size} (free-tier limits) ...")
@@ -223,15 +224,21 @@ def run_eval(
                 say(f"  {message.id}: ok")
             except Exception as exc:  # noqa: BLE001 - only the type is kept; the text may quote the message
                 limited = is_retryable(exc)
+                this_limit = describe_rate_limit(exc) if limited else None
+                if this_limit and (rate_limit_details(exc).abbreviation or last_limit is None):  # keep the last limit the provider NAMED
+                    last_limit = this_limit
                 rate_limited_in_a_row = rate_limited_in_a_row + 1 if limited else 0
                 if row is None or row["status"] != "scored":
                     row = {**error_row(message, exc), "calendar": calendar_mode(real_calendar)}
                     append_row(path, row)
                     done[message.id] = row
                 # Type and provider code only (e.g. "BadRequestError, code tool_use_failed"): the text may quote the message.
-                say(f"  {message.id}: {stage} failed ({describe_error(exc)}){' - rate limit' if limited else ''}")
+                kind = (" - rate limit" + (f" ({this_limit})" if this_limit else "")) if limited else ""
+                say(f"  {message.id}: {stage} failed ({describe_error(exc)}){kind}")
                 if rate_limited_in_a_row >= STOP_AFTER_RATE_LIMITS:
-                    say(f"  {STOP_AFTER_RATE_LIMITS} rate-limit failures in a row: stopping. Run the same command later to continue.")
+                    say(f"  {STOP_AFTER_RATE_LIMITS} rate-limit failures in a row: stopping."
+                        + (f" Limit hit: {last_limit}." if last_limit else " The provider did not say which limit it was.")
+                        + " Run the same command later to continue.")
                     return [done[m.id] for m in messages if m.id in done], True
     return [done[m.id] for m in messages if m.id in done], False
 

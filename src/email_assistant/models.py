@@ -23,6 +23,7 @@ import random
 import re
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any, Callable, Optional, Sequence
 
 from langchain.chat_models import init_chat_model
@@ -85,10 +86,32 @@ def _status_code(exc: BaseException) -> Optional[int]:
     return value if isinstance(value, int) else None
 
 
+# When a model call is streamed (`langgraph dev`, Studio), the provider's error arrives inside the event stream, not as an
+# HTTP answer. The SDK then raises a plain `APIError` with only the message: no status code and no `tool_use_failed` code.
+# So this form is recognised by the error's type and its message.
+STREAMED_NO_TOOL_TEXT = "tool choice is required, but model did not call a tool"
+
+
+def is_streamed_no_tool_call(exc: BaseException) -> bool:
+    """True for the streamed form of "a tool was required, but the model did not call one".
+
+    The error (or one that caused it) is an `APIError` of the groq or openai SDK, and its message says so.
+    A different error type that happens to quote the phrase does not count.
+    """
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if any(cls.__name__ == "APIError" for cls in type(exc).__mro__) and STREAMED_NO_TOOL_TEXT in str(exc).lower():
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
 def _is_model_mistake(exc: BaseException) -> bool:
-    """True for a provider error that says the model's output was unusable (`tool_use_failed`, `output_parse_failed`)."""
+    """True for a provider error that says the model's output was unusable: a code (`tool_use_failed`,
+    `output_parse_failed`) or the streamed "tool choice is required" form."""
     text = str(exc).lower()
-    return any(code in text for code in MODEL_MISTAKE_CODES) or error_code(exc) in MODEL_MISTAKE_CODES
+    return any(code in text for code in MODEL_MISTAKE_CODES) or error_code(exc) in MODEL_MISTAKE_CODES or is_streamed_no_tool_call(exc)
 
 
 def is_retryable(exc: BaseException) -> bool:
@@ -177,9 +200,11 @@ class NoToolCallError(RuntimeError):
 def tool_call_nudge(exc: BaseException) -> Optional[str]:
     """If `exc` is a tool-calling mistake the model can fix, return a short reminder for it.
 
-    Three mistakes are known:
+    Four mistakes are known:
     - "Tool choice is required, but model did not call a tool": a forced tool call, but the
       model wrote a closing sentence instead (usually because the work was already done).
+    - The same sentence as a plain `APIError` with no status and no code: that is how it arrives when the call is
+      streamed (`langgraph dev`). It is recognised by the error type and the message (`is_streamed_no_tool_call`).
     - "tool call validation failed ... did not match schema": the model sent an argument in
       the wrong shape. Groq checks arguments strictly, e.g. a `datetime` needs seconds and a
       time zone.
@@ -187,7 +212,7 @@ def tool_call_nudge(exc: BaseException) -> Optional[str]:
       tool runs, so asking again cannot repeat an action. The model is asked at most MAX_NUDGES times, like the others.
     The reminder never repeats the model's output or the tool arguments (they may hold personal data).
     """
-    if isinstance(exc, NoToolCallError):
+    if isinstance(exc, NoToolCallError) or is_streamed_no_tool_call(exc):
         return NUDGE_NO_TOOL
     text = str(exc).lower()
     if "tool_use_failed" not in text:
@@ -269,6 +294,84 @@ def describe_error(exc: BaseException) -> str:
     """Safe to print or log: the error's type and its provider code, never its message text."""
     code = error_code(exc)
     return f"{type(exc).__name__}, code {code}" if code else type(exc).__name__
+
+
+# ---------------------------------------------------------------------------
+# Which rate limit was hit, and when to try again
+# ---------------------------------------------------------------------------
+
+# Groq names the limit in the error text with these short names, for example "... on tokens per day (TPD): Limit 100000 ...".
+LIMIT_NAMES = {"RPM": "requests per minute", "RPD": "requests per day", "TPM": "tokens per minute", "TPD": "tokens per day"}
+_LIMIT_IN_TEXT = re.compile(r"\b(RPM|RPD|TPM|TPD)\b")
+_TRY_AGAIN = re.compile(r"try again in\s+((?:\d+(?:\.\d+)?(?:ms|h|m|s))+)", re.I)  # "try again in 7m12.5s"
+_DURATION_PART = re.compile(r"(\d+(?:\.\d+)?)(ms|h|m|s)")
+_SECONDS_PER = {"ms": 0.001, "s": 1, "m": 60, "h": 3600}
+
+
+@dataclass(frozen=True)
+class RateLimit:
+    """What a 429 tells us. `abbreviation` is RPM, RPD, TPM or TPD, or None if the error did not say."""
+
+    abbreviation: str | None
+    retry_after_seconds: float | None
+
+    @property
+    def window(self) -> str | None:
+        """"per minute" or "per day" (the part that tells you whether waiting a little helps)."""
+        return None if self.abbreviation is None else LIMIT_NAMES[self.abbreviation].split(" ", 1)[1]
+
+
+def format_wait(seconds: float) -> str:
+    """3.2 -> '3.2s', 862.5 -> '14m 23s', 3725 -> '1h 2m 5s'."""
+    if seconds < 10:
+        return f"{seconds:.1f}s"
+    total = round(seconds)
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    return " ".join(part for part in (f"{hours}h" if hours else "", f"{minutes}m" if minutes else "", f"{secs}s" if secs or not (hours or minutes) else "") if part)
+
+
+def _header_seconds(exc: BaseException) -> float | None:
+    headers = getattr(getattr(exc, "response", None), "headers", None)
+    try:
+        value = headers.get("retry-after") if headers is not None else None
+        seconds = float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds is not None and seconds >= 0 else None
+
+
+def rate_limit_details(exc: BaseException) -> RateLimit | None:
+    """The limit type and the retry-after time of a 429 (Groq), or None if `exc` is not a rate limit.
+
+    Reads the `retry-after` header first, then "Please try again in 7m12.5s" in the text. Only the four short limit names
+    and a number of seconds are ever taken from the error: the text itself is never returned, because errors can quote
+    content (hard rule 5).
+    """
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        text = str(exc)
+        if _status_code(exc) == 429 or "'rate_limit_exceeded'" in text or '"rate_limit_exceeded"' in text:  # this error itself, not a cause (error_code() looks through causes)
+            named = _LIMIT_IN_TEXT.search(text)
+            seconds = _header_seconds(exc)
+            if seconds is None:
+                again = _TRY_AGAIN.search(text)
+                if again:
+                    seconds = sum(float(n) * _SECONDS_PER[unit] for n, unit in _DURATION_PART.findall(again.group(1)))
+            return RateLimit(named.group(1) if named else None, seconds)
+        exc = exc.__cause__ or exc.__context__
+    return None
+
+
+def describe_rate_limit(exc: BaseException) -> str | None:
+    """A line for the screen, for example 'tokens per day (TPD), retry after about 14m 23s'. None if `exc` is not a rate limit."""
+    found = rate_limit_details(exc)
+    if found is None:
+        return None
+    what = f"{LIMIT_NAMES[found.abbreviation]} ({found.abbreviation})" if found.abbreviation else "limit type not named by the provider"
+    wait = f"retry after about {format_wait(found.retry_after_seconds)}" if found.retry_after_seconds is not None else "no retry time given"
+    return f"{what}, {wait}"
 
 
 # ---------------------------------------------------------------------------

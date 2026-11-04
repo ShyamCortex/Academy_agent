@@ -1,7 +1,6 @@
 """Tool-calling mistakes seen with gpt-oss on Groq, and the eval guard for the judge model."""
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +9,7 @@ import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
+from academy_helpers import clean_env
 from email_assistant import models
 from email_assistant.academy.tools import ACADEMY_TOOLS
 from email_assistant.models import ModelConfigError, is_retryable, require_distinct_judge, tool_call_nudge, tool_llm, use_fake_models
@@ -153,7 +153,7 @@ def test_the_existing_eval_entry_points_call_the_guard():
 
 
 def test_the_real_response_tests_refuse_to_start(tmp_path):
-    env = {**os.environ, "AGENT_MODEL": "fake:same", "JUDGE_MODEL": "fake:same", "LANGSMITH_TRACING": "false"}
+    env = clean_env(AGENT_MODEL="fake:same", JUDGE_MODEL="fake:same", LANGSMITH_TRACING="false")
     done = subprocess.run([sys.executable, "-m", "pytest", str(ROOT / "tests" / "test_response.py"), "--collect-only", "-q", "-p", "no:cacheprovider"],
                           cwd=tmp_path, env=env, capture_output=True, text=True, timeout=180)
     assert done.returncode != 0

@@ -32,6 +32,9 @@ Everything else is in [Later](#later-not-in-the-22-nov-core).
 | 21 | `grounding.py` reads equivalent formats as one fact (`5 pm` = `17:00`; `7 Nov` = `Saturday 7th` = `7, 14 and 21 Nov` = `2026-11-07`) and `wrong_weekdays` checks a weekday written **right next to** a date. A draft with a wrong weekday is not clean, so it counts against the "no invented numbers" bar. | Shyam |
 | 22 | The judge is told the sender's display name (not the email address) and returns `dates_match_tools`; false caps the score at 2. v1 rows have no such key and are read as "matches". | Shyam |
 | 23 | Groq 400 `output_parse_failed` is recovered like `tool_use_failed`: the model is reminded and asked again, at most 2 times, never waited on. Safe because the error comes before any tool runs. | Shyam |
+| 24 | A streamed model call (`langgraph dev`, Studio) reports "Tool choice is required, but model did not call a tool" as a plain `APIError` with no status code and no `tool_use_failed` code. It is recognised by error type (`APIError` of the groq or openai SDK, also as the cause of another error) **and** message, and gets the same remind-and-retry (max 2) as the other form; never waited on. `e2e.py` reports the calendar event and outbox lines even when the run ends in an error or times out (never a pass: exit code 1). | Shyam |
+| 25 | The MCP child process never reads `.env`: the bridge starts it with `--no-dotenv` and hands it only `SERVER_ENV_VARS`. Started by hand (`python -m email_assistant.academy.mcp_server`) it still reads `.env`. Tests that start a child use a clean environment and an empty temp folder (`tests/academy_helpers.clean_env`). | Shyam |
+| 26 | When `safety_eval` stops on rate limits it prints which limit Groq named (RPM, RPD, TPM, TPD, in words) and the retry-after time, from the `retry-after` header or the "try again in" text. Never any other error text. | Shyam |
 
 ## Status
 
@@ -44,6 +47,8 @@ Everything else is in [Later](#later-not-in-the-22-nov-core).
 | 4 | Small MCP server (read-only) | same branch as Phase 2 | 2 | — | 18 Nov | **Done, merged** (PR #5). `search_knowledge` joined the server in Phase 3 |
 | 3 | Light RAG over the FAQ | same branch as Phase 5 | 3.5 | FAQ text by 17 Nov | 18–19 Nov | **Code done in the cloud (FAQ written by the build session, 30 Q&As); SQL, loader and recall@3 pending on the laptop** ([`LAPTOP_RAG_EVALS.md`](LAPTOP_RAG_EVALS.md)) |
 | 5b | Eval v2: fix the general causes found in the v1 dev replies | `claude/relaxed-goodall-kqyxlb` (name set by the cloud session) | — | Laptop: fresh dev run `dev-v2-20261104` | 4–5 Nov | **Code done in the cloud, 714 no-key tests pass (MCP off and on), mutation check done; PR open. v2 numbers pending** ([Eval v2 fixes](#eval-v2-fixes)) |
+| 5c | Live-server fix: streamed "tool choice is required" error; e2e report after an error | `claude/streamed-tool-choice-recovery` | — | Laptop: `langgraph dev` + `e2e` again | 4–5 Nov | **Code done in the cloud, 736 no-key tests pass, 10 new mutations caught; PR open** ([Streamed tool-choice error](#streamed-tool-choice-error)) |
+| 5d | MCP child isolation, rate-limit message (built on top of 5c; one PR with both) | `claude/mcp-child-isolation` | — | Laptop: `pytest tests/unit` | 4–5 Nov | **Code done in the cloud, 777 no-key tests pass (also with a decoy `.env` in the repo), 14 more mutations caught; PR open** ([MCP child isolation](#mcp-child-isolation-and-the-rate-limit-message)) |
 | 7 | README + demo video | `phase/7-show` | 3.5 | You record the video | 20–22 Nov | Not started |
 | | **Total** | | **30** | | | |
 
@@ -430,6 +435,94 @@ uv run python -m email_assistant.academy.safety_eval --run-id dev-v2-20261104
 ```
 
 Expect `714 passed` from pytest. The run writes `docs/agent/results/eval_dev-v2-20261104.{md,json,jsonl}` and leaves the v1 files alone. Compare the two tables; do not change `dev_messages.jsonl` between them. If the run stops on rate limits, run the same command again.
+
+---
+
+## Streamed tool-choice error
+
+Found in the live server (`langgraph dev`) after the eval v2 work: the owner approved `send_reply`, the calendar event and the outbox line were both written, and then the graph crashed at the closing `Done` step with `groq.APIError('Tool choice is required, but model did not call a tool')`. The remind-and-retry recovery in `models.py` did not catch it.
+
+| | |
+|---|---|
+| Cause | The recovery recognised the error by an HTTP status or by the `tool_use_failed` code. A **streamed** call gets the provider's error as an event inside the stream, so the SDK raises a plain `APIError(message)`: no `status_code`, `body` is `None`, no code. Checked against the installed `groq` 's `APIError` class. |
+| Fix | `models.is_streamed_no_tool_call(exc)`: the error, or one that caused it, is an `APIError` (by class name, so groq and openai both count) **and** its message contains the sentence. A different type that quotes the sentence, or an `APIError` with another message, does not count. It is part of `_is_model_mistake` (never waited on, also for triage and judge) and `tool_call_nudge` answers it with the usual "call a tool, or `Done`" reminder. Max 2 re-asks, nothing from the error in the reminder. |
+| Why re-asking is safe at the `Done` step | The reply and booking already ran after the owner's approval. Asking the model again runs no tool; if it asks for another write, that write goes to the owner for approval like any other. |
+| Test | `tests/unit/test_streamed_no_tool_call.py` builds the error as the SDK does, then runs the real graph with a model that is read **chunk by chunk** (`stream_mode="messages"`) and raises the error from inside the stream on the closing turn: the run finishes, the owner is asked once per write, one event, one outbox line. A twin test turns the recognition off and shows the old crash (event and outbox line written, run ends in the error). |
+| `e2e.py` | A run that ends in `error` or `timeout` now prints what was done before it ended: events found in the test calendar and new replies in the outbox, marked "NOT a pass"; exit code stays 1. A calendar that cannot be read is reported by error type only. No message or reply text, as before. `verify` shares the same reader. |
+| Mutation check | 10 new mutations (type not checked, message not checked, cause chain, wrong reminder, not a model mistake; report dropped, report counts as pass, calendar error stops the report, error text shown, old replies counted): **all caught**. `uv run python scripts/mutation_check.py streamed` and `... e2e`. |
+| Not verified here | A real streamed Groq call. The error object is built from the SDK class and the streaming path is a fake chat model, so the laptop run is the proof. |
+
+Laptop:
+
+```bash
+git fetch origin
+git checkout claude/streamed-tool-choice-recovery
+git pull
+uv sync --extra dev
+uv run pytest tests/unit -q
+```
+
+Expect `736 passed`. Then the live check: `uv run langgraph dev` in one terminal, `uv run python -m email_assistant.academy.e2e` in another, approve both requests in Studio.
+
+---
+
+## MCP child isolation and the rate-limit message
+
+Branch `claude/mcp-child-isolation`, started from the 5c branch because PR 9 (fix 1 of the brief) was not merged yet; one PR carries both.
+
+### The MCP test that called a real project
+
+`test_the_real_server_runs_as_a_child_process_and_offers_the_same_tools` failed on the laptop with `DID NOT RAISE McpError`: the child server called the test Supabase project and got HTTP 200.
+
+| | |
+|---|---|
+| Cause | The child started in the repo folder and its `main()` ran `load_dotenv(".env")`, so it loaded the whole real `.env`. The environment the bridge gave it was already clean: the MCP SDK passes only a short safe list (`PATH`, `HOME`, ...) plus what `stdio_target` adds. The leak was the file, not the environment. |
+| Also a real bug, not only a test problem | The documented rule "the child gets only the settings it needs and not the model keys" was false while `USE_MCP=1`: through `.env` the child also got `GROQ_API_KEY`, `LANGSMITH_API_KEY` and the rest. |
+| Reproduced | Here, with a synthetic decoy `.env` in the repo root (unresolvable `.invalid` URL, fake keys; git-ignored and deleted afterwards): the same `DID NOT RAISE`. On the code before this branch it was the **only** failing test. |
+| Fix | `mcp_server.main(argv)` takes `--no-dotenv`; `stdio_target(cwd=None)` always passes it. The default working folder is unchanged, because the default Google token file is a relative path. |
+| Test | The real-server test now runs with every academy setting removed from the environment and an **empty temp folder as the child's working folder, holding a decoy `.env`**. It is run twice: folder given, and folder = the current folder (the production path). It also asserts the target's env is empty. If the child read the decoy it would use a fake URL (and could not reach any real project anyway). A unit test shows `main([])` reads `.env` and `main(["--no-dotenv"])` does not. |
+
+Other subprocess tests checked:
+
+| Test | Result |
+|---|---|
+| `test_graph_imports` (7 modules) | Already ran in an empty folder, but inherited the whole shell environment minus a deny-list of key names. Now `clean_env(...)`: an allow-list (`PATH`, `SYSTEMROOT`, `HOME`, `TEMP`, `VIRTUAL_ENV`, `PYTHONPATH`, ...) so nothing from the laptop's shell can change it. |
+| `test_the_real_response_tests_refuse_to_start` | Same: inherited `os.environ`; now `clean_env`. |
+| `test_academy_outbox` (`git check-ignore`, `git ls-files`) | Runs `git` only. No model, no network, no environment that matters. Left as is. |
+| `scripts/mutation_check.py` | Runs the test suite in a copy; its own environment is set on purpose (`PYTHONPATH`). Left as is. |
+
+**Not changed, but the same kind of thing:** a few tests call a command's `main()` in-process (`google_auth.main`, `triage_accuracy.main`, the FAQ commands), and those call `load_dotenv(".env")` in the repo folder, which copies the real `.env` into the test process. With the decoy present all 777 tests still pass, so no test depends on it today; but there is no guard that stops a future one. A global guard needs a decision (patch `load_dotenv` in every module that imports it by name) and I left it out.
+
+### The rate-limit message
+
+When `safety_eval` stops after 3 rate-limit failures in a row, it now says which limit and when to try again:
+
+```
+  d3: judge failed (RateLimitError, code rate_limit_exceeded) - rate limit (tokens per day (TPD), retry after about 14m 23s)
+  3 rate-limit failures in a row: stopping. Limit hit: tokens per day (TPD), retry after about 14m 23s. Run the same command later to continue.
+```
+
+- `models.rate_limit_details(exc)` and `describe_rate_limit(exc)`. The limit name is read from the short names Groq puts in its error text (`RPM`, `RPD`, `TPM`, `TPD`); the wait from the `retry-after` header, else from "Please try again in 7m12.5s". **Only those two things leave the error**: the four names and a number of seconds. If the error names no limit it says so ("limit type not named by the provider") instead of guessing.
+- Only a 429 (or a code `rate_limit_exceeded`) counts; each error in a cause chain is looked at on its own.
+- The stop line shows the last limit the provider **named**; each message line shows its own failure.
+- I could not see a real Groq 429 from here. The wording ("on tokens per day (TPD)", "Please try again in ...") is what Groq's documentation and error reports show; the parser is built to fall back to "not named" / "no retry time given" if it differs. Check the first real stop and tell me what it printed.
+- Observation, not changed: the backoff waits at most 60 s per try, so against a per-day limit with a retry-after of minutes or hours the 6 retries cannot help. A rule like "do not retry when retry-after is longer than the backoff limit" would save time. Say if you want it.
+
+### Checks
+
+777 no-key tests pass: MCP off, MCP on, and with a decoy `.env` in the repo root. Mutation check: 14 new mutations (6 for the child, 8 for the rate limit), all caught: `uv run python scripts/mutation_check.py "mcp child"` and `... "rate limit"`.
+
+Laptop:
+
+```bash
+git fetch origin
+git checkout claude/mcp-child-isolation
+git pull
+uv sync --extra dev
+uv run pytest tests/unit -q
+```
+
+Expect `777 passed`, with your real `.env` in place.
 
 ---
 
