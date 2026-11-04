@@ -116,7 +116,7 @@ def test_waits_double_each_retry_with_jitter(sleeps):
     assert state["calls"] == 4
     assert len(sleeps) == 3
     for wait, planned in zip(sleeps, [2, 4, 8]):
-        assert 0.5 * planned <= wait <= planned  # jitter: 50-100% of the planned wait
+        assert 0.8 * planned <= wait <= planned  # jitter: 80-100% of the planned wait
 
 
 def test_wait_never_exceeds_the_cap(sleeps):
