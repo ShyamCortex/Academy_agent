@@ -1,4 +1,4 @@
-"""Mutation check for the weekday/date checks, the model-error recovery and the e2e report (docs/agent/PLAN.md, "Eval v2 fixes" and "Streamed tool-choice error").
+"""Mutation check for the weekday/date checks, the model-error recovery, the e2e report, the MCP child isolation and the rate-limit message (docs/agent/PLAN.md).
 
 A test that cannot fail proves nothing. This script breaks the checks on purpose, one small change at a time, and runs the
 no-key unit tests. A change that the tests do NOT notice is a "survivor": a check with no test that really depends on it.
@@ -22,6 +22,8 @@ ACADEMY = "src/email_assistant/academy/"
 G, C, S, J, P = (ACADEMY + name for name in ("grounding.py", "calendar_tools.py", "eval_scorers.py", "judge.py", "prompts.py"))
 M = "src/email_assistant/models.py"
 E = ACADEMY + "e2e.py"
+BRIDGE, SERVER = ACADEMY + "mcp_bridge.py", ACADEMY + "mcp_server.py"
+EVAL = ACADEMY + "safety_eval.py"
 SE = ACADEMY + "safety_eval.py"
 
 # (name, file, old text, new text, how many times each `old` occurs). Each breaks one thing the new checks rely on.
@@ -99,6 +101,23 @@ MUTATIONS = [
      "    except KeyError as exc:  # noqa: BLE001\n        return queued, None, type(exc).__name__", 1),
     ("e2e: the calendar error text is shown", E, "return queued, None, type(exc).__name__", "return queued, None, str(exc)", 1),
     ("e2e: replies from before the run are counted", E, "read_outbox()[outbox_before:]", "read_outbox()", 1),
+    # --- the MCP child process must not read the repo's .env (found on the laptop: it called a real project)
+    ("mcp child: the server is started without --no-dotenv", BRIDGE, '"email_assistant.academy.mcp_server", "--no-dotenv"]', '"email_assistant.academy.mcp_server"]', 1),
+    ("mcp child: the given working folder is ignored", BRIDGE, "cwd=os.fspath(cwd) if cwd is not None else os.getcwd())", "cwd=os.getcwd())", 1),
+    ("mcp child: the whole environment is handed over", BRIDGE, "env = {name: os.environ[name] for name in SERVER_ENV_VARS if name in os.environ}", "env = dict(os.environ)", 1),
+    ("mcp child: the server always reads .env", SERVER, "    if not args.no_dotenv:", "    if True:", 1),
+    ("mcp child: the server never reads .env", SERVER, "    if not args.no_dotenv:", "    if False:", 1),
+    ("mcp child: test environments keep everything", "tests/academy_helpers.py", "if name.upper() in INHERITED_ENV_NAMES}", "if True}", 1),
+    # --- which rate limit stopped the run, and when to try again
+    ("rate limit: the retry-after header is ignored", M, "            seconds = _header_seconds(exc)\n", "            seconds = None\n", 1),
+    ("rate limit: per day is called per minute", M, '"TPD": "tokens per day"', '"TPD": "tokens per minute"', 1),
+    ("rate limit: short waits are shown as minutes", M, "    if seconds < 10:\n        return", "    if seconds < 100:\n        return", 1),
+    ("rate limit: the error text is shown", M, 'return f"{what}, {wait}"', 'return f"{what}, {wait} {exc}"', 1),
+    ("rate limit: a 500 counts as a rate limit", M, "if _status_code(exc) == 429 or", "if _status_code(exc) in (429, 500) or", 1),
+    ("rate limit: the error that caused it is not looked at", M, "return RateLimit(named.group(1) if named else None, seconds)\n        exc = exc.__cause__ or exc.__context__",
+     "return RateLimit(named.group(1) if named else None, seconds)\n        break", 1),
+    ("rate limit: the stop message leaves out the limit", EVAL, '(f" Limit hit: {last_limit}." if last_limit else', '(f" Limit hit: {last_limit}." if False else', 1),
+    ("rate limit: a later unnamed limit erases the named one", EVAL, "(rate_limit_details(exc).abbreviation or last_limit is None)", "True", 1),
     # --- prompts (a presence test only: it shows the rule cannot be dropped by accident, not that the model obeys it)
     ("prompt: 'say it is unavailable' allowed", P, "do not say it is unavailable", "it is fine to say it is unavailable", 1),
     # The rule is written twice (the Today section and rule 2), so breaking only one proves nothing: both are changed.

@@ -124,10 +124,15 @@ class McpReadClient:
 
 # ---- which client the proxies use ---------------------------------------------------------------
 
-def stdio_target() -> StdioServerParameters:
-    """Start `python -m email_assistant.academy.mcp_server` with only the settings it needs."""
+def stdio_target(cwd: str | os.PathLike | None = None) -> StdioServerParameters:
+    """Start `python -m email_assistant.academy.mcp_server` with only the settings it needs.
+
+    `--no-dotenv`: the server does not read `.env`, so it cannot pick up anything the agent did not hand it (model keys,
+    other settings). `cwd` is the folder it starts in (default: here, because the default Google token file is a relative path).
+    """
     env = {name: os.environ[name] for name in SERVER_ENV_VARS if name in os.environ}
-    return StdioServerParameters(command=sys.executable, args=["-m", "email_assistant.academy.mcp_server"], env=env, cwd=os.getcwd())
+    return StdioServerParameters(command=sys.executable, args=["-m", "email_assistant.academy.mcp_server", "--no-dotenv"], env=env,
+                                 cwd=os.fspath(cwd) if cwd is not None else os.getcwd())
 
 
 def in_process_client() -> McpReadClient:

@@ -464,3 +464,43 @@ def test_a_reply_with_a_wrong_weekday_fails_the_numbers_bar_and_the_table_says_w
     assert row["numbers"] == {"checked": True, "ungrounded": [], "wrong_weekday": ["Tuesday, 7 Nov"]}
     table = (out / "eval_dev-20261104.md").read_text(encoding="utf-8")
     assert "weekday does not match its date: Tuesday, 7 Nov" in table and "FAIL" in table
+
+
+# ---- a run that stops on rate limits says which limit and when to try again ------------------------------------------
+
+def groq_429(text, retry_after=None):
+    import groq
+    import httpx
+
+    request = httpx.Request("POST", "https://api.groq.invalid/openai/v1/chat/completions")
+    body = {"error": {"message": f"Rate limit reached {text} {SECRET_TEXT}", "type": "tokens", "code": "rate_limit_exceeded"}}
+    return groq.RateLimitError(f"Error code: 429 - {body}", response=httpx.Response(429, request=request, headers={"retry-after": retry_after} if retry_after else {}), body=body)
+
+
+def test_when_the_run_stops_on_rate_limits_it_says_which_limit_and_when_to_try_again(env, monkeypatch):
+    monkeypatch.setenv("MODEL_MAX_RETRIES", "0")
+    dataset = write(env / "dev.jsonl", [row_for(f"d{i}", "book_demo", BOOK) for i in range(1, 6)])
+    limit = "on tokens per day (TPD): Limit 100000, Used 99990, Requested 50."
+    code, output, out = cli(env, dataset, "--batch-size", "10", triage_script=["book_demo"] * 3, agent_script=drafting(3),
+                            judge_script=[groq_429(limit, "863")] * 3)
+    assert code == 2
+    assert "d1: judge failed (RateLimitError, code rate_limit_exceeded) - rate limit (tokens per day (TPD), retry after about 14m 23s)" in output
+    assert "3 rate-limit failures in a row: stopping. Limit hit: tokens per day (TPD), retry after about 14m 23s. Run the same command later to continue." in output
+    assert SECRET_TEXT not in output and "100000" not in output                       # the provider's text is not printed
+    assert SECRET_TEXT not in (out / "eval_dev-20261104.jsonl").read_text(encoding="utf-8")
+
+
+def test_the_stop_message_uses_the_last_limit_that_was_named(env, monkeypatch):
+    monkeypatch.setenv("MODEL_MAX_RETRIES", "0")
+    dataset = write(env / "dev.jsonl", [row_for(f"d{i}", "book_demo", BOOK) for i in range(1, 4)])
+    errors = [groq_429("on tokens per minute (TPM): Limit 8000.", "2"), groq_429("on requests per minute (RPM): Limit 30.", "6"), groq_429("Please try again in 3s.")]
+    _, output, _ = cli(env, dataset, "--batch-size", "10", triage_script=["book_demo"] * 3, agent_script=drafting(3), judge_script=errors)
+    assert "d3: judge failed (RateLimitError, code rate_limit_exceeded) - rate limit (limit type not named by the provider, retry after about 3.0s)" in output
+    assert "Limit hit: requests per minute (RPM), retry after about 6.0s." in output     # the last limit the provider named
+
+
+def test_a_rate_limit_the_provider_does_not_describe_still_stops_the_run_and_says_so(env, monkeypatch):
+    monkeypatch.setenv("MODEL_MAX_RETRIES", "0")
+    dataset = write(env / "dev.jsonl", [row_for(f"d{i}", "book_demo", BOOK) for i in range(1, 4)])
+    _, output, _ = cli(env, dataset, "--batch-size", "10", triage_script=["book_demo"] * 3, agent_script=drafting(3), judge_script=[RuntimeError("429 rate limit")] * 3)
+    assert "3 rate-limit failures in a row: stopping. The provider did not say which limit it was." in output

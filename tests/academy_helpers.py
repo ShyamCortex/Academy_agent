@@ -2,6 +2,7 @@
 
 import base64
 import json
+import os
 import uuid
 from datetime import datetime
 
@@ -29,6 +30,22 @@ def make_jwt(role: str) -> str:
 
 
 ANON_KEY = make_jwt("anon")
+
+# What a test subprocess may inherit: how to find programs and temp folders, and nothing else. No key, no model name, no
+# academy setting from a developer's shell, so a test that starts a child process cannot be changed by what is on the laptop.
+INHERITED_ENV_NAMES = frozenset({
+    "PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PROCESSOR_ARCHITECTURE", "TEMP", "TMP", "TMPDIR",
+    "HOME", "HOMEDRIVE", "HOMEPATH", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "USER", "USERNAME", "LOGNAME", "LANG", "LC_ALL",
+    "VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH", "PYTHONIOENCODING", "PYTHONUTF8",
+})
+
+
+def clean_env(**extra: str) -> dict[str, str]:
+    """A minimal environment for a child process in a test, plus `extra`. Use it together with `cwd=<a temp folder>` so the
+    child cannot find the repo's `.env` either."""
+    env = {name: value for name, value in os.environ.items() if name.upper() in INHERITED_ENV_NAMES}
+    env.update(extra)
+    return env
 
 
 class SeedServer:

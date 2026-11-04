@@ -23,6 +23,7 @@ import random
 import re
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any, Callable, Optional, Sequence
 
 from langchain.chat_models import init_chat_model
@@ -293,6 +294,84 @@ def describe_error(exc: BaseException) -> str:
     """Safe to print or log: the error's type and its provider code, never its message text."""
     code = error_code(exc)
     return f"{type(exc).__name__}, code {code}" if code else type(exc).__name__
+
+
+# ---------------------------------------------------------------------------
+# Which rate limit was hit, and when to try again
+# ---------------------------------------------------------------------------
+
+# Groq names the limit in the error text with these short names, for example "... on tokens per day (TPD): Limit 100000 ...".
+LIMIT_NAMES = {"RPM": "requests per minute", "RPD": "requests per day", "TPM": "tokens per minute", "TPD": "tokens per day"}
+_LIMIT_IN_TEXT = re.compile(r"\b(RPM|RPD|TPM|TPD)\b")
+_TRY_AGAIN = re.compile(r"try again in\s+((?:\d+(?:\.\d+)?(?:ms|h|m|s))+)", re.I)  # "try again in 7m12.5s"
+_DURATION_PART = re.compile(r"(\d+(?:\.\d+)?)(ms|h|m|s)")
+_SECONDS_PER = {"ms": 0.001, "s": 1, "m": 60, "h": 3600}
+
+
+@dataclass(frozen=True)
+class RateLimit:
+    """What a 429 tells us. `abbreviation` is RPM, RPD, TPM or TPD, or None if the error did not say."""
+
+    abbreviation: str | None
+    retry_after_seconds: float | None
+
+    @property
+    def window(self) -> str | None:
+        """"per minute" or "per day" (the part that tells you whether waiting a little helps)."""
+        return None if self.abbreviation is None else LIMIT_NAMES[self.abbreviation].split(" ", 1)[1]
+
+
+def format_wait(seconds: float) -> str:
+    """3.2 -> '3.2s', 862.5 -> '14m 23s', 3725 -> '1h 2m 5s'."""
+    if seconds < 10:
+        return f"{seconds:.1f}s"
+    total = round(seconds)
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    return " ".join(part for part in (f"{hours}h" if hours else "", f"{minutes}m" if minutes else "", f"{secs}s" if secs or not (hours or minutes) else "") if part)
+
+
+def _header_seconds(exc: BaseException) -> float | None:
+    headers = getattr(getattr(exc, "response", None), "headers", None)
+    try:
+        value = headers.get("retry-after") if headers is not None else None
+        seconds = float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds is not None and seconds >= 0 else None
+
+
+def rate_limit_details(exc: BaseException) -> RateLimit | None:
+    """The limit type and the retry-after time of a 429 (Groq), or None if `exc` is not a rate limit.
+
+    Reads the `retry-after` header first, then "Please try again in 7m12.5s" in the text. Only the four short limit names
+    and a number of seconds are ever taken from the error: the text itself is never returned, because errors can quote
+    content (hard rule 5).
+    """
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        text = str(exc)
+        if _status_code(exc) == 429 or "'rate_limit_exceeded'" in text or '"rate_limit_exceeded"' in text:  # this error itself, not a cause (error_code() looks through causes)
+            named = _LIMIT_IN_TEXT.search(text)
+            seconds = _header_seconds(exc)
+            if seconds is None:
+                again = _TRY_AGAIN.search(text)
+                if again:
+                    seconds = sum(float(n) * _SECONDS_PER[unit] for n, unit in _DURATION_PART.findall(again.group(1)))
+            return RateLimit(named.group(1) if named else None, seconds)
+        exc = exc.__cause__ or exc.__context__
+    return None
+
+
+def describe_rate_limit(exc: BaseException) -> str | None:
+    """A line for the screen, for example 'tokens per day (TPD), retry after about 14m 23s'. None if `exc` is not a rate limit."""
+    found = rate_limit_details(exc)
+    if found is None:
+        return None
+    what = f"{LIMIT_NAMES[found.abbreviation]} ({found.abbreviation})" if found.abbreviation else "limit type not named by the provider"
+    wait = f"retry after about {format_wait(found.retry_after_seconds)}" if found.retry_after_seconds is not None else "no retry time given"
+    return f"{what}, {wait}"
 
 
 # ---------------------------------------------------------------------------

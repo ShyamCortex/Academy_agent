@@ -6,12 +6,15 @@ Write tools (booking, rescheduling, cancelling, replying) are never offered: an 
 would skip the owner's approval (hard rule 1).
 
 Run it (stdio transport):   python -m email_assistant.academy.mcp_server
-The agent starts it for you when USE_MCP=1 (see `mcp_bridge.py`).
+The agent starts it for you when USE_MCP=1 (see `mcp_bridge.py`), with --no-dotenv: the agent hands the server only
+the settings it needs, so the server must not read the repo's `.env` too (that would give it the model keys and
+make it use whatever the file says instead of what the agent passed). Started by hand, it reads `.env` as usual.
 
 It reads the same settings as the in-process tools: ACADEMY_SUPABASE_URL, ACADEMY_SUPABASE_ANON_KEY,
 GOOGLE_CALENDAR_ID and the Google token file. Nothing is written to stdout except MCP messages.
 """
 
+import argparse
 import functools
 
 from dotenv import load_dotenv
@@ -52,8 +55,12 @@ def build_server() -> MCPServer:
     return server
 
 
-def main() -> None:
-    load_dotenv(".env")
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Read-only academy lookups over MCP (stdio).")
+    parser.add_argument("--no-dotenv", action="store_true", help="do not read .env; use only the environment this process was given")
+    args = parser.parse_args(argv)
+    if not args.no_dotenv:
+        load_dotenv(".env")
     build_server().run("stdio")
 
 

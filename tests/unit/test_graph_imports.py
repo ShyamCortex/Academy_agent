@@ -4,11 +4,12 @@ Each import runs in a fresh Python process in an empty folder, so a leftover .en
 already-imported module cannot hide a problem.
 """
 
-import os
 import subprocess
 import sys
 
 import pytest
+
+from academy_helpers import clean_env
 
 MODULES = [
     "langgraph_101",
@@ -20,18 +21,13 @@ MODULES = [
     "academy.triage_accuracy",
     "academy.dataset",
 ]
-SECRET_AND_MODEL_VARS = [
-    "OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "LANGSMITH_API_KEY",
-    "TRIAGE_MODEL", "AGENT_MODEL", "JUDGE_MODEL",
-]
 
 
 @pytest.mark.parametrize("module", MODULES)
 def test_module_imports_without_keys(module, tmp_path):
-    env = {k: v for k, v in os.environ.items() if k not in SECRET_AND_MODEL_VARS}
-    env["LANGSMITH_TRACING"] = "false"
+    # A clean environment in an empty folder: no key, no model name and no `.env` can reach the import.
     result = subprocess.run(
         [sys.executable, "-c", f"import email_assistant.{module}"],
-        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120,
+        cwd=tmp_path, env=clean_env(LANGSMITH_TRACING="false"), capture_output=True, text=True, timeout=120,
     )
     assert result.returncode == 0, result.stderr[-800:]
