@@ -14,7 +14,9 @@ from email_assistant.academy.judge import (
 )
 
 SENDER = "Parent A <parent.a@example.invalid>"
-SLOTS = json.dumps({"free_slots": ["2026-11-07T10:00", "2026-11-09T17:00"], "demo_minutes": 45, "demo_fee_rupees": 0})
+SLOTS = json.dumps({"free_slots": [{"label": "Saturday 2026-11-07 10:00 IST", "start": "2026-11-07T10:00", "end": "2026-11-07T10:45"},
+                                   {"label": "Monday 2026-11-09 17:00 IST", "start": "2026-11-09T17:00", "end": "2026-11-09T17:45"}],
+                    "demo_minutes": 45, "demo_fee_rupees": 0})
 PLANS = json.dumps({"plans": [{"name": "Starter", "classes_per_month": 4, "fee_rupees": 1234}]})
 
 
@@ -120,13 +122,13 @@ def test_tool_errors_are_counted_but_do_not_fail_by_themselves():
 # ---- invented numbers ------------------------------------------------------------------------------
 
 def test_a_draft_with_only_grounded_numbers_is_clean():
-    assert check_numbers(good_booking()) == {"checked": True, "ungrounded": []}
+    assert check_numbers(good_booking()) == {"checked": True, "ungrounded": [], "wrong_weekday": []}
 
 
 def test_an_invented_fee_is_caught():
     trace = Trace(calls=[call("get_plans"), call("send_reply", to="x@example.invalid", subject="Fees", body="The Starter plan is ₹1500 a month.")],
                   outputs=[("get_plans", PLANS)])
-    assert check_numbers(trace) == {"checked": True, "ungrounded": ["1500"]}
+    assert check_numbers(trace) == {"checked": True, "ungrounded": ["1500"], "wrong_weekday": []}
 
 
 def test_a_number_in_the_subject_counts_too_and_every_draft_is_checked():
@@ -141,7 +143,44 @@ def test_a_number_that_only_the_scripted_owner_or_the_parent_said_does_not_groun
 
 
 def test_no_draft_means_nothing_to_check():
-    assert check_numbers(Trace(calls=[call("get_plans")], outputs=[("get_plans", PLANS)])) == {"checked": False, "ungrounded": []}
+    assert check_numbers(Trace(calls=[call("get_plans")], outputs=[("get_plans", PLANS)])) == {"checked": False, "ungrounded": [], "wrong_weekday": []}
+
+
+# ---- weekday next to a date (v1 eval: "Tuesday, 7 Nov" when 7 Nov is a Saturday) ----------------------------------
+
+def reply_trace(body: str) -> Trace:
+    return Trace(calls=[call("find_demo_slots"), call("send_reply", to="x", subject="Demo", body=body)], outputs=[("find_demo_slots", SLOTS)])
+
+
+def test_a_wrong_weekday_next_to_a_real_date_is_caught_even_though_the_date_and_time_are_grounded():
+    result = check_numbers(reply_trace("We have Tuesday, 7 Nov at 10:00."))
+    assert result["ungrounded"] == [] and result["wrong_weekday"] == ["Tuesday, 7 Nov"]
+
+
+def test_the_right_weekday_passes():
+    assert check_numbers(reply_trace("We have Saturday 7 Nov at 10:00 or Monday 9 Nov at 5 pm."))["wrong_weekday"] == []
+
+
+def test_a_draft_with_a_wrong_weekday_is_not_clean_in_the_summary_and_is_listed_with_its_reason():
+    rows = [row("a", "book_demo", "book_demo", drafted=True), row("b", "book_demo", "book_demo", drafted=True, wrong_weekday=["Tuesday, 7 Nov"])]
+    n = summarize(rows, prices={})["numbers"]
+    assert (n["clean"], n["rate"]) == (1, 0.5) and n["offenders"] == [{"id": "b", "numbers": [], "weekdays": ["Tuesday, 7 Nov"]}]
+    assert {t["name"]: t["met"] for t in summarize(rows, prices={})["targets"]}["numbers_grounded"] is False
+
+
+def test_rows_saved_before_the_weekday_check_existed_still_summarize():
+    old = row("a", "book_demo", "book_demo", drafted=True)
+    del old["numbers"]["wrong_weekday"]
+    old_judge = grade()
+    del old_judge["dates_match_tools"]
+    old = {**old, "judge_status": "done", "judge": old_judge}
+    summary = summarize([old], prices={})
+    assert summary["numbers"]["clean"] == 1 and summary["quality"]["dates_mismatch_ids"] == []
+
+
+def test_the_judge_saying_a_date_is_wrong_is_listed():
+    rows = [row("a", "book_demo", "book_demo", drafted=True, judge=grade(5)), row("b", "book_demo", "book_demo", drafted=True, judge=grade(2, dates_ok=False))]
+    assert summarize(rows, prices={})["quality"]["dates_mismatch_ids"] == ["b"]
 
 
 # ---- one row ---------------------------------------------------------------------------------------
@@ -171,19 +210,20 @@ def test_agent_model_usage_alone_counts_as_reaching_the_drafter():
 
 # ---- the run-level summary -------------------------------------------------------------------------
 
-def row(id, expected, predicted, *, language="en", tools_ok=True, drafted=False, reached=None, ungrounded=(), judge=None, seconds=1.0, usage=None):
+def row(id, expected, predicted, *, language="en", tools_ok=True, drafted=False, reached=None, ungrounded=(), wrong_weekday=(), judge=None, seconds=1.0, usage=None):
     reached = drafted if reached is None else reached
     return {"id": id, "split": "dev", "language": language, "sample": False, "status": "scored", "error": None,
             "expected_label": expected, "predicted_label": predicted, "triage_correct": expected == predicted,
             "reached_drafter": reached, "drafted": drafted, "finished": True, "called_tools": [],
             "tools": {"pass": tools_ok, "missing": [] if tools_ok else ["send_reply"], "unexpected_writes": [], "bad_slot": None, "wrong_recipient": False, "tool_errors": 0},
-            "numbers": {"checked": drafted, "ungrounded": list(ungrounded)},
+            "numbers": {"checked": drafted, "ungrounded": list(ungrounded), "wrong_weekday": list(wrong_weekday)},
             "judge_status": "done" if judge else ("pending" if drafted else "not_needed"), "judge": judge,
             "usage": usage or {}, "judge_usage": {}, "seconds": seconds, "judge_seconds": 0.5 if judge else None}
 
 
-def grade(quality=5, chess=False, include=True, violated=False):
-    return {"quality": quality, "must_include_met": include, "must_not_say_violated": violated, "gives_chess_advice": chess}
+def grade(quality=5, chess=False, include=True, violated=False, dates_ok=True):
+    return {"quality": quality, "must_include_met": include, "must_not_say_violated": violated, "gives_chess_advice": chess,
+            "dates_match_tools": dates_ok}
 
 
 def test_triage_accuracy_overall_per_label_and_per_language():
@@ -224,7 +264,7 @@ def test_number_grounding_rate_and_offenders():
     rows = [row("a", "fees_plans", "fees_plans", drafted=True), row("b", "fees_plans", "fees_plans", drafted=True, ungrounded=["500"]),
             row("c", "sensitive", "sensitive")]
     n = summarize(rows, prices={})["numbers"]
-    assert (n["drafts_checked"], n["clean"], n["rate"]) == (2, 1, 0.5) and n["offenders"] == [{"id": "b", "numbers": ["500"]}]
+    assert (n["drafts_checked"], n["clean"], n["rate"]) == (2, 1, 0.5) and n["offenders"] == [{"id": "b", "numbers": ["500"], "weekdays": []}]
 
 
 def test_tool_correctness_overall_and_given_correct_triage():
@@ -297,7 +337,7 @@ def test_prices_are_read_from_the_environment_and_a_bad_value_means_no_price():
 def test_a_judge_score_outside_one_to_five_is_rejected():
     for bad in (0, 6):
         with pytest.raises(ValidationError):
-            JudgeGrade(reasoning="r", quality=bad, must_include_met=True, must_not_say_violated=False, gives_chess_advice=False)
+            JudgeGrade(reasoning="r", dates_match_tools=True, quality=bad, must_include_met=True, must_not_say_violated=False, gives_chess_advice=False)
 
 
 def test_the_judge_prompt_carries_the_message_the_tool_results_the_draft_and_both_lists():
@@ -308,9 +348,28 @@ def test_the_judge_prompt_carries_the_message_the_tool_results_the_draft_and_bot
         assert part in user["content"]
 
 
+def test_the_judge_is_told_the_senders_display_name_but_not_the_email_address():
+    _, user = judge_prompt(msg(sender="Srilatha <srilatha@example.invalid>"), [{"body": "Hello Srilatha"}], [])
+    assert "<sender_name>Srilatha</sender_name>" in user["content"] and "srilatha@example.invalid" not in user["content"]
+    _, none = judge_prompt(msg(sender="plain@example.invalid"), [{"body": "x"}], [])
+    assert "<sender_name>(none)</sender_name>" in none["content"] and "plain@example.invalid" not in none["content"]
+
+
+def test_the_judge_is_told_to_check_weekdays_and_dates_against_the_tool_results_and_to_accept_the_senders_name():
+    prompt = " ".join(JUDGE_SYSTEM_PROMPT.split())     # the prompt wraps lines
+    for part in ("dates_match_tools", "weekday", "<sender_name>", "tool results are the truth", "at most 2"):
+        assert part in prompt
+    assert "dates_match_tools" in JudgeGrade.model_json_schema()["required"]
+
+
+def test_the_weekday_check_comes_before_the_score_in_the_judges_answer_format():
+    fields = list(JudgeGrade.model_fields)
+    assert fields.index("dates_match_tools") < fields.index("quality")
+
+
 def test_a_long_tool_result_is_cut_before_it_goes_to_the_judge():
     _, user = judge_prompt(msg(), [{"body": "x"}], [("get_plans", "y" * 50_000)])
-    assert len(user["content"]) < 8000
+    assert len(user["content"]) < 12000
 
 
 # ---- agreement with your scores --------------------------------------------------------------------

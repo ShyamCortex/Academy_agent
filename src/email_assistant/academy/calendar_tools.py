@@ -21,6 +21,7 @@ from email_assistant.academy import config, dates
 from email_assistant.academy.calendar_backend import Block, CalendarBackend, CalendarError, get_calendar, overlaps
 
 MAX_RANGE_DAYS = 31  # find_demo_slots looks at most this far ahead of date_from
+LOOKAHEAD_OCCURRENCES = 3  # find_demo_slots always covers at least the next 3 occurrences of every demo weekday
 MAX_EVENT_MINUTES = 120  # a demo is 45 minutes; anything above this is a typo or a mistake
 
 
@@ -45,6 +46,57 @@ def free_slots(busy: Iterable[Block], day_from: date, day_to: date, now: datetim
                 slots.append(start)
         day += timedelta(days=1)
     return slots
+
+
+def demo_weekdays() -> list[str]:
+    """The weekdays that have demo slots, Monday first."""
+    return [name for name in dates.WEEKDAYS if config.DEMO_SLOT_TIMES.get(name)]
+
+
+def parse_weekday(value: str) -> str | None:
+    """'saturday', 'Sat', 'SAT.' -> 'Saturday'. None if the text is not a weekday (three letters or more are enough)."""
+    word = value.strip().rstrip(".").lower()
+    if len(word) < 3:
+        return None
+    return next((name for name in dates.WEEKDAYS if name.lower().startswith(word)), None)
+
+
+def _has_slot_ahead(day: date, now: datetime) -> bool:
+    return any(
+        datetime.combine(day, time(*(int(part) for part in hhmm.split(":"))), tzinfo=config.TIMEZONE) > now
+        for hhmm in config.DEMO_SLOT_TIMES.get(dates.weekday_name(day), [])
+    )
+
+
+def lookahead_end(first_day: date, now: datetime, weekdays: Iterable[str], occurrences: int = LOOKAHEAD_OCCURRENCES) -> date:
+    """The last day a search must cover so that each of `weekdays` shows its next `occurrences` days.
+
+    A day counts only if one of its slot times is still ahead of `now` (this evening's slots count, this morning's do not).
+    Why: a search that stops after a few days makes the model write the later dates itself, and it gets them wrong.
+    """
+    last = first_day
+    for name in weekdays:
+        found, day = 0, max(first_day, now.date())
+        for _ in range(7 * (occurrences + 1)):
+            if dates.weekday_name(day) == name and _has_slot_ahead(day, now):
+                found, last = found + 1, max(last, day)
+                if found == occurrences:
+                    break
+            day += timedelta(days=1)
+    return last
+
+
+def slot_view(start: datetime) -> dict[str, str]:
+    """One free slot as the model sees it: a label with weekday, date and 24 h time to copy, and the exact start and end to book with."""
+    end = start + timedelta(minutes=config.DEMO_CLASS_MINUTES)
+    return {"label": f"{dates.weekday_name(start.date())} {start:%Y-%m-%d %H:%M} IST",
+            "start": dates.iso_minutes(start), "end": dates.iso_minutes(end)}
+
+
+def demo_terms() -> str:
+    """'free, 45 minutes' (or '₹300, 45 minutes'), from config.py."""
+    fee = "free" if config.DEMO_CLASS_FEE_RUPEES == 0 else f"₹{config.DEMO_CLASS_FEE_RUPEES}"
+    return f"{fee}, {config.DEMO_CLASS_MINUTES} minutes"
 
 
 def _first_name(value: str) -> str:
@@ -80,7 +132,7 @@ def _not_a_demo_slot(start: datetime, end: datetime) -> str | None:
     on_the_clock = start.second == 0 and start.microsecond == 0
     if not on_the_clock or start.strftime("%H:%M") not in config.DEMO_SLOT_TIMES.get(dates.weekday_name(start.date()), []):
         return ("That start time is not a demo slot. Demo classes are held only at the times find_demo_slots returns. "
-                "Call find_demo_slots and use one of its free_slots as the start.")
+                "Call find_demo_slots and use the start of one of its free_slots.")
     if end - start != timedelta(minutes=config.DEMO_CLASS_MINUTES):
         return f"A demo class is exactly {config.DEMO_CLASS_MINUTES} minutes. Set the end to the start plus {config.DEMO_CLASS_MINUTES} minutes."
     return None
@@ -97,38 +149,52 @@ def _taken(calendar: CalendarBackend, start: datetime, end: datetime, ignore_eve
 # ---- read-only ------------------------------------------------------------------------------
 
 @tool
-def find_demo_slots(date_from: str, date_to: str) -> str:
-    """List free demo-class slots from date_from to date_to. Both are dates as YYYY-MM-DD."""
+def find_demo_slots(date_from: str, date_to: str, weekday: str = "") -> str:
+    """List free demo-class slots from date_from to date_to (YYYY-MM-DD). Each slot has a label with its weekday, date and time: copy it, never work out a weekday or date yourself. The search always covers at least the next 3 occurrences of every demo day, so later dates in the answer are real. weekday (optional, for example "Monday"; leave it empty for all days) keeps only that day."""
     calendar = get_calendar()
+    now = dates.now_ist()
     try:
         day_from, day_to = dates.parse_day(date_from), dates.parse_day(date_to)
     except ValueError:
         return _json(calendar, {"error": "Dates must look like YYYY-MM-DD."})
     if day_to < day_from:
         return _json(calendar, {"error": "date_to must not be before date_from."})
-    day_to = min(day_to, day_from + timedelta(days=MAX_RANGE_DAYS))
+    wanted = None
+    if weekday.strip():
+        wanted = parse_weekday(weekday)
+        if wanted is None:
+            return _json(calendar, {"error": f"weekday must be a day of the week, for example Monday. Demo days: {', '.join(demo_weekdays())}."})
+    day_from = max(day_from, now.date())  # nothing in the past can be offered; this keeps the 31-day cap meaningful
+    day_to = min(max(day_to, lookahead_end(day_from, now, [wanted] if wanted else demo_weekdays())), day_from + timedelta(days=MAX_RANGE_DAYS))
     window_start = datetime.combine(day_from, time.min, tzinfo=config.TIMEZONE)
     window_end = datetime.combine(day_to + timedelta(days=1), time.min, tzinfo=config.TIMEZONE)
     try:
         busy = calendar.busy(window_start, window_end)
     except CalendarError as exc:
         return _json(calendar, {"error": str(exc)})
-    slots = free_slots(busy, day_from, day_to, dates.now_ist())
-    return _json(calendar, {
+    slots = [s for s in free_slots(busy, day_from, day_to, now) if wanted is None or dates.weekday_name(s.date()) == wanted]
+    result: dict[str, Any] = {
         "timezone": config.TIMEZONE_NAME,
         "demo_minutes": config.DEMO_CLASS_MINUTES,
         "demo_fee_rupees": config.DEMO_CLASS_FEE_RUPEES,
+        "demo_terms": demo_terms(),
+        "demo_days": demo_weekdays(),
         "checked_from": day_from.isoformat(),
         "checked_to": day_to.isoformat(),
-        "free_slots": [dates.iso_minutes(s) for s in slots],
-    })
+    }
+    if wanted:
+        result["weekday"] = wanted
+        if wanted not in demo_weekdays():
+            result["note"] = f"No demo classes are held on {wanted}. Demo days: {', '.join(demo_weekdays())}."
+    result["free_slots"] = [slot_view(s) for s in slots]
+    return _json(calendar, result)
 
 
 # ---- writes (the owner must approve every call) -----------------------------------------------
 
 @tool
 def create_demo_event(parent_email: str, child_first_name: str, start: str, end: str) -> str:
-    """Book a demo class. start must be one of the free_slots from find_demo_slots, and end is start plus the demo length. Both are strings like 2026-11-07T10:00 (India time)."""
+    """Book a demo class. Use the start and end of one slot from the free_slots of find_demo_slots, copied exactly. Both are strings like 2026-11-07T10:00 (India time)."""
     calendar = get_calendar()
     first = _first_name(child_first_name)
     problem = _bad_event_input(parent_email, first)
@@ -165,7 +231,7 @@ def _only_demo(calendar: CalendarBackend, parent_email: str, first: str):
 
 @tool
 def reschedule_demo(parent_email: str, child_first_name: str, new_start: str, new_end: str) -> str:
-    """Move a booked demo class to a new time. new_start must be one of the free_slots from find_demo_slots, and new_end is new_start plus the demo length. Both are strings like 2026-11-07T10:00 (India time)."""
+    """Move a booked demo class to a new time. Use the start and end of one slot from the free_slots of find_demo_slots as new_start and new_end, copied exactly. Both are strings like 2026-11-07T10:00 (India time)."""
     calendar = get_calendar()
     first = _first_name(child_first_name)
     problem = _bad_event_input(parent_email, first)

@@ -29,7 +29,7 @@ def groq_error(status=400, code="tool_use_failed", message="tool call validation
 
 
 def grade(quality=4):
-    return JudgeGrade(reasoning="ok", quality=quality, must_include_met=True, must_not_say_violated=False, gives_chess_advice=False)
+    return JudgeGrade(reasoning="ok", dates_match_tools=True, quality=quality, must_include_met=True, must_not_say_violated=False, gives_chess_advice=False)
 
 
 @pytest.fixture(autouse=True)
@@ -66,7 +66,7 @@ def test_no_answer_at_all_is_re_asked():
 def test_a_bad_value_caught_by_our_own_check_is_re_asked():
     def out_of_range():
         try:
-            JudgeGrade(reasoning="x", quality=7, must_include_met=True, must_not_say_violated=False, gives_chess_advice=False)
+            JudgeGrade(reasoning="x", dates_match_tools=True, quality=7, must_include_met=True, must_not_say_violated=False, gives_chess_advice=False)
         except ValidationError as exc:
             return exc
     fake, answer = ask_judge(out_of_range(), grade(2))

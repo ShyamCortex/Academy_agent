@@ -44,7 +44,7 @@ def test_a_booking_run_is_recorded_with_its_calls_outputs_and_the_owners_stops(a
     assert [c.name for c in trace.calls] == ["find_demo_slots", "create_demo_event", "send_reply", "done"]
     assert trace.asked == ["create_demo_event", "send_reply"]            # the scripted owner was asked about both writes
     assert [name for name, _ in trace.outputs] == ["find_demo_slots", "create_demo_event", "send_reply"]
-    assert SLOT in json.loads(trace.outputs[0][1])["free_slots"] and json.loads(trace.outputs[1][1])["booked"] is True
+    assert SLOT in [s["start"] for s in json.loads(trace.outputs[0][1])["free_slots"]] and json.loads(trace.outputs[1][1])["booked"] is True
     assert trace.drafts()[0]["to"] == "parent.a@example.invalid"
     assert trace.seconds >= 0
 
@@ -203,7 +203,7 @@ def test_a_reschedule_row_can_actually_be_rescheduled(academy_world):
                                          new_start="2026-11-09T17:00", new_end="2026-11-09T17:45"))
     moved = json.loads(trace.outputs[-1][1])
     assert moved["rescheduled"] is True and moved["old_start"] == "2026-11-07T10:00" and moved["start"] == "2026-11-09T17:00"
-    assert "2026-11-07T10:00" not in json.loads(trace.outputs[0][1])["free_slots"]       # the booked slot is not offered to anyone
+    assert "2026-11-07T10:00" not in [s["start"] for s in json.loads(trace.outputs[0][1])["free_slots"]]       # the booked slot is not offered to anyone
 
 
 def test_a_cancel_row_can_actually_be_cancelled_and_without_the_seed_it_could_not(academy_world):

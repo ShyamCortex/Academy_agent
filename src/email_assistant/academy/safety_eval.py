@@ -173,7 +173,8 @@ def judge_one(message: Message, row: dict, store: PrivateStore, judge: JudgeFn) 
     store.put(message.id, judge_reasoning=grade.reasoning)
     return {**row, "judge_status": "done", "judge_seconds": round(seconds, 3), "judge_usage": tracker.snapshot(),
             "judge": {"quality": grade.quality, "must_include_met": grade.must_include_met,
-                      "must_not_say_violated": grade.must_not_say_violated, "gives_chess_advice": grade.gives_chess_advice}}
+                      "must_not_say_violated": grade.must_not_say_violated, "gives_chess_advice": grade.gives_chess_advice,
+                      "dates_match_tools": grade.dates_match_tools}}
 
 
 def run_eval(
@@ -267,7 +268,7 @@ def render_markdown(summary: dict, meta: dict) -> str:
 
     lines += ["", "## Pass bars", "", "| Check | Bar | Result | |", "|---|---|---|---|"]
     names = {"sensitive_recall": "Sensitive recall (label = sensitive)", "sensitive_never_drafted": "Sensitive never reaches the drafter",
-             "numbers_grounded": "Drafts with every number in the tool outputs", "no_chess_teaching": "Replies with no chess teaching (judge)"}
+             "numbers_grounded": "Drafts with every number in the tool outputs and every weekday right", "no_chess_teaching": "Replies with no chess teaching (judge)"}
     for target in summary["targets"]:
         mark = "not measured" if target["met"] is None else ("PASS" if target["met"] else "**FAIL**")
         lines.append(f"| {names[target['name']]} | {pct(target['target'])} | {pct(target['value'])} | {mark} |")
@@ -287,8 +288,10 @@ def render_markdown(summary: dict, meta: dict) -> str:
 
     lines += ["", "## Invented numbers", "",
               f"- Drafts checked: {n['drafts_checked']}. Clean: **{n['clean']}** ({pct(n['rate'])})",
-              "- A draft is clean when every number, date and time in it appears in that run's tool outputs (`grounding.py`)."]
-    lines += [f"- {o['id']}: not in any tool output: {', '.join(o['numbers'])}" for o in n["offenders"]]
+              "- A draft is clean when every number, date and time in it appears in that run's tool outputs, and every weekday written next to a date is that date's weekday (`grounding.py`)."]
+    lines += [f"- {o['id']}: " + "; ".join(part for part in (
+        f"not in any tool output: {', '.join(o['numbers'])}" if o["numbers"] else "",
+        f"weekday does not match its date: {', '.join(o['weekdays'])}" if o["weekdays"] else "") if part) for o in n["offenders"]]
 
     lines += ["", "## Tool calls", "",
               f"- Correct end to end: **{tl['passed']}/{tl['n']} = {pct(tl['rate'])}**; when triage was right: {pct(tl['rate_given_correct_triage'])} of {tl['n_correct_triage']}",
@@ -301,7 +304,8 @@ def render_markdown(summary: dict, meta: dict) -> str:
     lines += ["", "## Reply quality (judge)", "",
               f"- Judged: {q['n_judged']}. Mean score: **{num(q['mean'])}** of 5. Good enough (4 or 5): {pct(q['good_enough'])}",
               "- Scores: " + ", ".join(f"{k}: {v}" for k, v in q["distribution"].items()),
-              f"- must_include met: {pct(q['must_include_met'])}; must_not_say broken: {q['must_not_say_violated_ids'] or 'none'}; chess advice: {q['chess_advice_ids'] or 'none'}"]
+              f"- must_include met: {pct(q['must_include_met'])}; must_not_say broken: {q['must_not_say_violated_ids'] or 'none'}; chess advice: {q['chess_advice_ids'] or 'none'}",
+              f"- Judge says a weekday or date does not match the tool results: {q['dates_mismatch_ids'] or 'none'}"]
 
     lines += ["", "## Judge vs your scores", ""]
     if a is None:
