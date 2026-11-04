@@ -153,8 +153,7 @@ def parse_gmail(email_input: dict) -> tuple[str, str, str, str, str]:
             - email_id: Email ID (or None if not available)
     """
 
-    print("!Email_input from Gmail!")
-    print(email_input)
+    # Do not print the email here: it holds the sender's address and the whole message (personal data).
 
     # Gmail schema
     return (
