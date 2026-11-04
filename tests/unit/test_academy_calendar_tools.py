@@ -1,7 +1,7 @@
 """Calendar tools on a fake calendar: slot finder, booking, rescheduling, cancelling. No keys, no network."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -104,10 +104,9 @@ def test_booking_creates_one_event_with_the_first_name_only(academy_world):
 
 
 def test_times_are_read_as_india_time_and_other_offsets_are_converted(academy_world):
-    book(start="04:30", end="05:15")  # 04:30 India time on a Saturday: not an academy slot, but the owner may book it
     other = json.loads(create_demo_event.invoke({"parent_email": "b@example.invalid", "child_first_name": "Ria",
-                                                 "start": "2026-11-08T05:00:00+00:00", "end": "2026-11-08T05:45:00+00:00"}))
-    assert other["start"] == "2026-11-08T10:30"  # 05:00 UTC is 10:30 in India
+                                                 "start": "2026-11-09T11:30:00+00:00", "end": "2026-11-09T12:15:00+00:00"}))
+    assert other["booked"] is True and other["start"] == "2026-11-09T17:00"  # 11:30 UTC is Monday 17:00 in India, a demo slot
 
 
 BAD_BOOKINGS = {
@@ -129,11 +128,61 @@ def test_bad_booking_input_is_refused_and_nothing_is_written(academy_world, case
     assert "create_demo" not in academy_world.calendar.calls
 
 
-def test_double_booking_a_time_is_refused(academy_world):
+def test_double_booking_a_slot_is_refused(academy_world):
     assert book()["booked"] is True
-    second = book(email="b@example.invalid", child="Ria", start="10:30", end="11:15")
+    second = book(email="b@example.invalid", child="Ria")            # the same slot, another family
     assert second["booked"] is False and "taken" in second["error"]
     assert len(academy_world.calendar.events) == 1
+    assert book(email="b@example.invalid", child="Ria", start="11:30", end="12:15")["booked"] is True  # the next slot is still free
+
+
+def test_a_slot_blocked_in_the_calendar_cannot_be_booked(academy_world):
+    academy_world.calendar._fixed = [Block(at("2026-11-07", "10:30"), at("2026-11-07", "11:00"))]
+    result = book()
+    assert result["booked"] is False and "taken" in result["error"] and academy_world.calendar.events == {}
+
+
+# ---- only demo slots can be booked (the rule find_demo_slots follows, enforced in the tool) ------
+
+NOT_SLOTS = {
+    "a time between slots": ("2026-11-07", "10:30", "11:15"),
+    "a slot time on the wrong weekday": ("2026-11-07", "17:00", "17:45"),      # Monday's time, on a Saturday
+    "a weekday with no demo at all": ("2026-11-10", "17:00", "17:45"),         # Tuesday
+    "an early hour": ("2026-11-07", "07:00", "07:45"),
+    "not on the minute": ("2026-11-07", "10:00:30", "10:45:30"),
+}
+
+
+@pytest.mark.parametrize("case", NOT_SLOTS)
+def test_a_start_that_is_not_a_demo_slot_is_refused_with_a_clear_error_and_nothing_is_written(academy_world, case):
+    day, start, end = NOT_SLOTS[case]
+    result = book(day=day, start=start, end=end)
+    assert result["booked"] is False
+    assert "not a demo slot" in result["error"] and "find_demo_slots" in result["error"]
+    assert academy_world.calendar.events == {} and "create_demo" not in academy_world.calendar.calls
+
+
+@pytest.mark.parametrize("end", ["10:30", "11:00", "10:46", "10:44"])
+def test_a_demo_slot_with_the_wrong_length_is_refused(academy_world, end):
+    result = book(start="10:00", end=end)
+    assert result["booked"] is False and f"exactly {config.DEMO_CLASS_MINUTES} minutes" in result["error"]
+    assert academy_world.calendar.events == {}
+
+
+def test_every_slot_find_demo_slots_offers_can_be_booked_and_then_stops_being_offered(academy_world):
+    offered = slots(academy_world, "2026-11-04", "2026-11-30")
+    assert len(offered) > 10
+    for number, slot in enumerate(offered):
+        start = at(*slot.split("T"))
+        end = dates.iso_minutes(start + timedelta(minutes=config.DEMO_CLASS_MINUTES))
+        result = json.loads(create_demo_event.invoke({"parent_email": f"family{number}@example.invalid", "child_first_name": "Kid",
+                                                      "start": slot, "end": end}))
+        assert result["booked"] is True, (slot, result)
+    assert slots(academy_world, "2026-11-04", "2026-11-30") == []
+
+
+def test_the_tool_text_tells_the_model_to_use_a_returned_slot():
+    assert "free_slots from find_demo_slots" in create_demo_event.description
 
 
 def test_a_child_with_a_demo_already_booked_is_sent_to_reschedule(academy_world):

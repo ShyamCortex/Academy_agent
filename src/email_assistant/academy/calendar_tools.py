@@ -71,6 +71,21 @@ def _bad_window(start: datetime, end: datetime, now: datetime) -> str | None:
     return None
 
 
+def _not_a_demo_slot(start: datetime, end: datetime) -> str | None:
+    """None if start..end is exactly a demo slot of the academy (day, start time and length from config.py), else the reason.
+
+    Whether the slot is also free in the calendar is checked separately, by the same overlap rule `free_slots` uses.
+    This is the rule behind "offer only slots find_demo_slots returned": the model's prompt says it, this enforces it.
+    """
+    on_the_clock = start.second == 0 and start.microsecond == 0
+    if not on_the_clock or start.strftime("%H:%M") not in config.DEMO_SLOT_TIMES.get(dates.weekday_name(start.date()), []):
+        return ("That start time is not a demo slot. Demo classes are held only at the times find_demo_slots returns. "
+                "Call find_demo_slots and use one of its free_slots as the start.")
+    if end - start != timedelta(minutes=config.DEMO_CLASS_MINUTES):
+        return f"A demo class is exactly {config.DEMO_CLASS_MINUTES} minutes. Set the end to the start plus {config.DEMO_CLASS_MINUTES} minutes."
+    return None
+
+
 def _taken(calendar: CalendarBackend, start: datetime, end: datetime, ignore_event: str | None = None) -> bool:
     """True if anything else takes time between start and end. `ignore_event` is the event being moved."""
     return any(
@@ -113,7 +128,7 @@ def find_demo_slots(date_from: str, date_to: str) -> str:
 
 @tool
 def create_demo_event(parent_email: str, child_first_name: str, start: str, end: str) -> str:
-    """Book a demo class on the calendar. start and end are strings like 2026-11-07T14:00 (India time)."""
+    """Book a demo class. start must be one of the free_slots from find_demo_slots, and end is start plus the demo length. Both are strings like 2026-11-07T10:00 (India time)."""
     calendar = get_calendar()
     first = _first_name(child_first_name)
     problem = _bad_event_input(parent_email, first)
@@ -123,7 +138,7 @@ def create_demo_event(parent_email: str, child_first_name: str, start: str, end:
         except ValueError:
             problem = "start and end must look like 2026-11-07T14:00."
         else:
-            problem = _bad_window(begins, ends, dates.now_ist())
+            problem = _bad_window(begins, ends, dates.now_ist()) or _not_a_demo_slot(begins, ends)
     if problem:
         return _json(calendar, {"booked": False, "error": problem})
     try:

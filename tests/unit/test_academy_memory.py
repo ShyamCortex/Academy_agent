@@ -11,7 +11,7 @@ from email_assistant.schemas import UserPreferences
 from fakes import ScriptedModel, tool_call_message
 
 SEND = dict(to="p@example.invalid", subject="Re", body="Hello")
-BOOK = dict(parent_email="p@example.invalid", child_first_name="Arjun", start="2026-11-07T14:00", end="2026-11-07T14:45")
+BOOK = dict(parent_email="p@example.invalid", child_first_name="Arjun", start="2026-11-07T10:00", end="2026-11-07T10:45")
 
 
 def _learned(text="Sign off with Thanks."):

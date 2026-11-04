@@ -43,7 +43,7 @@ TOOLS_PROMPT = """
 4. get_workshops() - upcoming workshops: date, fee, seats left. Read-only.
 5. get_tournaments() - upcoming tournaments: date, entry fee, seats left. Read-only.
 6. search_knowledge(question) - search the academy FAQ (how to book, payment, discounts, complaints, what the assistant can do). Returns the 3 closest FAQ answers with a similarity score. Read-only. For live fees, seats and dates use tools 2-5; if they differ from an FAQ answer, the live tool is right. If no FAQ answer fits, ask the owner with Question. Do not make up an answer.
-7. create_demo_event(parent_email, child_first_name, start, end) - book a demo class. start and end are strings like 2026-11-07T14:00. The owner approves first.
+7. create_demo_event(parent_email, child_first_name, start, end) - book a demo class. start must be one of the free_slots from find_demo_slots; end is start plus the demo length. Both are strings like 2026-11-07T10:00. Any other start is rejected. The owner approves first.
 8. reschedule_demo(parent_email, child_first_name, new_start, new_end) - move a booked demo class. The owner approves first.
 9. cancel_demo(parent_email, child_first_name) - cancel a booked demo class. The owner approves first.
 10. send_reply(to, subject, body) - reply to the parent. to is the parent's email address. The owner approves first.

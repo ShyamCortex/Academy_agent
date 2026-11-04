@@ -42,7 +42,7 @@ def test_a_read_only_tool_runs_without_asking():
 @pytest.mark.parametrize("tool_name,args", [
     ("send_reply", {"to": "p@example.invalid", "subject": "Re", "body": "Hello"}),
     ("create_demo_event", {"parent_email": "p@example.invalid", "child_first_name": "Arjun",
-                           "start": "2026-11-07T14:00", "end": "2026-11-07T14:45"}),
+                           "start": "2026-11-07T10:00", "end": "2026-11-07T10:45"}),
     ("reschedule_demo", {"parent_email": "p@example.invalid", "child_first_name": "Arjun",
                          "new_start": "2026-11-09T17:00", "new_end": "2026-11-09T17:45"}),
     ("cancel_demo", {"parent_email": "p@example.invalid", "child_first_name": "Arjun"}),
@@ -120,7 +120,7 @@ def test_two_tool_calls_in_one_turn_are_cut_to_one():
     two = AIMessage(content="", tool_calls=[
         {"name": "send_reply", "args": {"to": "a@example.invalid", "subject": "S", "body": "B"}, "id": "c1"},
         {"name": "create_demo_event", "args": {"parent_email": "a@example.invalid", "child_first_name": "A",
-                                               "start": "2026-11-07T14:00", "end": "2026-11-07T14:45"}, "id": "c2"},
+                                               "start": "2026-11-07T10:00", "end": "2026-11-07T10:45"}, "id": "c2"},
     ])
     agent = _drafting(two, tool_call_message("Done", done=True))
     with use_fake_models(triage=triage_says("book_demo"), agent=agent):
