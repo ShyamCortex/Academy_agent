@@ -6,7 +6,6 @@ import sys
 import pytest
 from typing import Dict, List, Any, Tuple
 from pydantic import BaseModel, Field
-from langchain.chat_models import init_chat_model
 
 from langsmith import testing as t
 
@@ -14,6 +13,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
 
+from email_assistant.models import structured_llm
 from email_assistant.utils import extract_tool_calls, format_messages_string
 from email_assistant.eval.prompts import RESPONSE_CRITERIA_SYSTEM_PROMPT
 
@@ -30,9 +30,8 @@ class CriteriaGrade(BaseModel):
     grade: bool = Field(description="Does the response meet the provided criteria?")
     justification: str = Field(description="The justification for the grade and score, including specific examples from the response.")
 
-# Create a global LLM for evaluation to avoid recreating it for each test
-criteria_eval_llm = init_chat_model("openai:gpt-4o")
-criteria_eval_structured_llm = criteria_eval_llm.with_structured_output(CriteriaGrade)
+# Judge model for evaluation comes from the JUDGE_MODEL env var (a different model family from the agent)
+criteria_eval_structured_llm = structured_llm("judge", CriteriaGrade)
 
 # Global variables for module name and imported module
 AGENT_MODULE = None

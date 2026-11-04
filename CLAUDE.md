@@ -99,7 +99,7 @@ This repo is being turned into the **Academy Support Agent** for EduChess (Champ
 1. **Owner approval on every send and every calendar change.** Any tool that sends a message or creates/changes/deletes a calendar event must go through a HITL interrupt. Deny by default: only tools on an explicit read-only allow-list may run without approval.
 2. **No invented facts.** Never state a fee, date, time, or seat count unless it came from a tool result in the same run.
 3. **Sensitive messages are never drafted.** A message labelled `sensitive` goes to the owner only; it must never reach the drafting agent, whatever memory or feedback says.
-4. **EduChess is read-only.** Use only the Supabase anon key. Never write, update or delete EduChess data. Never use a service-role key for EduChess.
+4. **Read-only data access, and never the real EduChess project.** The agent reads data from ONE separate free Supabase **test project** (a seeded copy of the EduChess schema plus the FAQ vectors) using only that project's **anon key**. The agent never writes, updates or deletes data. The FAQ loader is the only writer: it runs **only on the owner's laptop**, with the test project's own key, and never in the agent, in tests, or in a cloud session. Never touch the real EduChess project, and never use any EduChess key.
 5. **Minimal child data, synthetic data only.** Keep only what the task needs (e.g. first name). Tests, fixtures and eval data are synthetic. Never log message bodies or personal data.
 6. **No chess teaching from the model.** The agent handles admin (demos, fees, schedules, events); it does not give chess lessons or advice.
 7. **Secrets.** Keys live in `.env` (git-ignored) or the deploy platform's secret store. Never print, log, commit or echo keys or tokens.

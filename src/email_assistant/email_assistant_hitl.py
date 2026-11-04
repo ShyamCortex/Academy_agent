@@ -1,10 +1,10 @@
 from typing import Literal
 
-from langchain.chat_models import init_chat_model
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt, Command
 
+from email_assistant.models import structured_llm, tool_llm
 from email_assistant.tools import get_tools, get_tools_by_name
 from email_assistant.tools.default.prompt_templates import HITL_TOOLS_PROMPT
 from email_assistant.prompts import triage_system_prompt, triage_user_prompt, agent_system_prompt_hitl, default_background, default_triage_instructions, default_response_preferences, default_cal_preferences
@@ -18,13 +18,13 @@ load_dotenv(".env")
 tools = get_tools(["write_email", "schedule_meeting", "check_calendar_availability", "Question", "Done"])
 tools_by_name = get_tools_by_name(tools)
 
-# Initialize the LLM for use with router / structured output
-llm = init_chat_model("openai:gpt-4.1", temperature=0.0)
-llm_router = llm.with_structured_output(RouterSchema) 
+# Models come from env vars (TRIAGE_MODEL / AGENT_MODEL), see email_assistant/models.py
 
-# Initialize the LLM, enforcing tool use (of any available tools) for agent
-llm = init_chat_model("openai:gpt-4.1", temperature=0.0)
-llm_with_tools = llm.bind_tools(tools, tool_choice="required")
+# LLM for use with router / structured output
+llm_router = structured_llm("triage", RouterSchema)
+
+# LLM for the agent, enforcing tool use (of any available tools)
+llm_with_tools = tool_llm("agent", tools, tool_choice="required")
 
 # Nodes 
 def triage_router(state: State) -> Command[Literal["triage_interrupt_handler", "response_agent", "__end__"]]:
