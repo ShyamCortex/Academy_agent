@@ -6,7 +6,8 @@
       "email_assistant_hitl": "./src/email_assistant/email_assistant_hitl.py:email_assistant",
       "email_assistant_hitl_memory": "./src/email_assistant/email_assistant_hitl_memory.py:email_assistant",
       "email_assistant_hitl_memory_gmail": "./src/email_assistant/email_assistant_hitl_memory_gmail.py:email_assistant",
-      "cron": "./src/email_assistant/cron.py:graph"
+      "cron": "./src/email_assistant/cron.py:graph",
+      "academy_agent": "./src/email_assistant/academy/graph.py:academy_agent"
     },
     "python_version": "3.11",
     "env": ".env",
