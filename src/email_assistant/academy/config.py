@@ -1,13 +1,12 @@
-"""Made-up academy facts for Phase 1.
+"""Made-up academy facts. They are the single source for two things:
 
-EVERYTHING IN THIS FILE IS INVENTED. It is a stand-in for the real academy so the mock tools,
-prompts and tests have something to read. It is not real EduChess data and must never be
-copied from it. In Phase 2 the mock tools are replaced by tools that read the real data, and
-the graph then states facts only from tool results (hard rule 2).
+1. `supabase/academy_test_schema.sql` seeds the TEST Supabase project from these lists
+   (`seed_sql.py` writes the seed block; a test fails if the SQL file and this file disagree).
+2. The academy hours and demo length that `find_demo_slots` uses.
 
-The prompts contain no fees, dates or seat counts. Only the mock tools in `tools.py` read those
-facts, so such a fact can reach a reply only by way of a tool result. (The sign-off below is the
-only text from this file that the prompts use.)
+EVERYTHING IN THIS FILE IS INVENTED. It is not real EduChess data and must never be copied
+from it. The agent states fees, batches and event facts only from tool results (hard rule 2),
+and the prompts contain no such facts.
 """
 
 from zoneinfo import ZoneInfo
@@ -30,16 +29,23 @@ DEMO_SLOT_TIMES = {
     "Saturday": ["10:00", "11:30"],
 }
 
-FEE_PLANS = [
-    {"plan": "Starter (SYNTHETIC)", "classes_per_month": 4, "fee_rupees": 1234},
-    {"plan": "Regular (SYNTHETIC)", "classes_per_month": 8, "fee_rupees": 2222},
+# ---- rows seeded into the test Supabase project (one list per table) ----------------------
+# Keys are the column names of the table with the same name in the SQL file.
+
+PLANS = [
+    {"name": "Starter (SYNTHETIC)", "classes_per_month": 4, "fee_rupees": 1234},
+    {"name": "Regular (SYNTHETIC)", "classes_per_month": 8, "fee_rupees": 2222},
 ]
 
 BATCHES = [
-    {"batch": "Batch A (SYNTHETIC)", "days": "Mon, Wed", "time": "17:00-18:00", "level": "beginner", "seats_left": 3},
-    {"batch": "Batch B (SYNTHETIC)", "days": "Sat", "time": "10:00-11:30", "level": "beginner", "seats_left": 5},
+    {"name": "Batch A (SYNTHETIC)", "days": "Mon, Wed", "time_range": "17:00-18:00", "level": "beginner", "seats_left": 3},
+    {"name": "Batch B (SYNTHETIC)", "days": "Sat", "time_range": "10:00-11:30", "level": "beginner", "seats_left": 5},
 ]
 
-EVENTS = [
-    {"event": "Sample Rapid Tournament (SYNTHETIC)", "date": "2026-12-06", "entry_fee_rupees": 99},
+WORKSHOPS = [
+    {"name": "Sample Weekend Workshop (SYNTHETIC)", "event_date": "2026-11-22", "fee_rupees": 150, "seats_left": 12},
+]
+
+TOURNAMENTS = [
+    {"name": "Sample Rapid Tournament (SYNTHETIC)", "event_date": "2026-12-06", "entry_fee_rupees": 99, "seats_left": 20},
 ]

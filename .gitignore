@@ -21,6 +21,13 @@ wheels/
 *.egg
 .secrets/
 
+# Academy agent: Google sign-in files, the local outbox, any downloaded OAuth client file
+outbox/
+client_secret*.json
+*google_credentials*.json
+*google_token*.json
+token.json
+
 # Jupyter Notebook
 .ipynb_checkpoints
 .langgraph_checkpoint

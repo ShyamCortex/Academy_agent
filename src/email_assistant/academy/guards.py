@@ -11,9 +11,10 @@ from email_assistant.academy.schemas import DRAFTABLE_LABELS
 # it removes the owner's approval for that tool. Exact match, case-sensitive.
 READ_ONLY_TOOLS = frozenset({
     "find_demo_slots",
-    "get_fee_plans",
-    "get_batches",
-    "get_upcoming_events",
+    "get_plans",
+    "get_batch_timings",
+    "get_workshops",
+    "get_tournaments",
 })
 
 # The only write tool whose edits teach the agent wording (response_preferences memory).

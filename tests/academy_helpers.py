@@ -1,14 +1,62 @@
 """Shared helpers for the academy graph tests (no API keys, no network)."""
 
+import base64
+import json
 import uuid
+from datetime import datetime
 
+import httpx
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
 
+from email_assistant.academy import config
 from email_assistant.academy.graph import build_graph
 from email_assistant.academy.schemas import RouterSchema
 from fakes import ScriptedModel
+
+# The clock every unit test sees (a Wednesday, 10:00 India time). Slots before this are in the past.
+NOW = datetime(2026, 11, 4, 10, 0, tzinfo=config.TIMEZONE)
+TEST_URL = "https://test-project.supabase.co"
+
+
+def make_jwt(role: str) -> str:
+    """A fake Supabase-style key: three dot-separated parts, the middle one says the role. Not signed."""
+    def part(data: dict) -> str:
+        return base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
+    return f"{part({'alg': 'HS256'})}.{part({'role': role})}.fake-signature"
+
+
+ANON_KEY = make_jwt("anon")
+
+
+class SeedServer:
+    """A pretend PostgREST server that answers from the rows in `config.py`. Records every request."""
+
+    def __init__(self):
+        self.tables = {
+            "plans": [dict(r, active=True) for r in config.PLANS],
+            "batches": [dict(r) for r in config.BATCHES],
+            "workshops": [dict(r) for r in config.WORKSHOPS],
+            "tournaments": [dict(r) for r in config.TOURNAMENTS],
+        }
+        self.requests: list[httpx.Request] = []
+        self.transport = httpx.MockTransport(self._handle)
+
+    def _handle(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        table = request.url.path.rsplit("/", 1)[-1]
+        if table not in self.tables:
+            return httpx.Response(404, json={"message": "no such table"})
+        rows = self.tables[table]
+        params = request.url.params
+        if "event_date" in params and params["event_date"].startswith("gte."):
+            rows = [r for r in rows if r["event_date"] >= params["event_date"][4:]]
+        if params.get("active") == "eq.true":
+            rows = [r for r in rows if r.get("active")]
+        columns = params["select"].split(",")
+        return httpx.Response(200, json=[{c: r[c] for c in columns} for r in rows])
+
 
 MESSAGE = {"from": "Parent A <parent.a@example.invalid>", "text": "Hello, can my son try a demo class this week?"}
 
