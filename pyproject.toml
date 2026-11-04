@@ -24,6 +24,8 @@ dependencies = [
     "rich",
     "langchain-google-genai>=4.4.2",
     "langchain-groq>=1.1.3",
+    "mcp==2.3.0",
+    "httpx>=0.28.1",
 ]
 
 [project.optional-dependencies]

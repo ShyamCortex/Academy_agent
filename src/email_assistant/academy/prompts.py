@@ -81,10 +81,16 @@ Today is {today}. The time zone is {timezone}. Use it for every date you work ou
 </ Hard rules >
 
 < Steps >
-1. Read the parent's message.
+1. Read the parent's message. The parent's email address is on the From line: use it as parent_email
+   and as the "to" of send_reply.
 2. Call a tool for any fact you need. Call one tool at a time.
-3. Draft the reply with send_reply. To book a demo, call create_demo_event, then draft the reply.
-4. After send_reply, call Done.
+3. To book a demo: call find_demo_slots, pick a slot it returned (the earliest one if the parent
+   asks for the earliest, otherwise one that fits what the parent said), call create_demo_event
+   for it, then draft the reply with send_reply. If the parent has not chosen a time, offer slots
+   that find_demo_slots returned in the reply instead of booking.
+4. To move a booked demo call reschedule_demo; to cancel one call cancel_demo. Then draft the reply with send_reply.
+   If a booking tool answers with an error, do not repeat it blindly: fix the cause, or ask the owner with Question.
+5. After send_reply, call Done.
 IMPORTANT: always answer with a tool call, never with plain text.
 </ Steps >
 

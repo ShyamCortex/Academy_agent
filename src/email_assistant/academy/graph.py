@@ -1,4 +1,4 @@
-"""Academy Support Agent graph (Phase 1, mock tools).
+"""Academy Support Agent graph (real tools: Google Calendar, test Supabase, local outbox).
 
     START -> triage_router --+-- draftable label --> response_agent (draft -> owner approval -> tools)
                              +-- sensitive --------> notify_owner -> END     (no edge to response_agent)
@@ -34,7 +34,7 @@ from email_assistant.academy.prompts import (
     triage_user_prompt,
 )
 from email_assistant.academy.schemas import DRAFTABLE_LABELS, RouterSchema, State, StateInput
-from email_assistant.academy.tools import ACADEMY_TOOLS, TOOLS_PROMPT
+from email_assistant.academy.tools import TOOLS_PROMPT, academy_tools
 from email_assistant.models import structured_llm, tool_llm
 
 log = logging.getLogger(__name__)
@@ -77,8 +77,12 @@ _router = structured_llm("triage", RouterSchema)
 
 # ---- the graph -----------------------------------------------------------------------------
 
-def build_graph(tools: Sequence[BaseTool] = ACADEMY_TOOLS) -> StateGraph:
-    """Build the (uncompiled) academy graph. Tests pass extra tools to prove they need approval."""
+def build_graph(tools: Sequence[BaseTool] | None = None) -> StateGraph:
+    """Build the (uncompiled) academy graph. Tests pass extra tools to prove they need approval.
+
+    With no `tools`, it uses `academy_tools()`: the full set, with read-only tools going through MCP when USE_MCP=1.
+    """
+    tools = academy_tools() if tools is None else tools
     tools_by_name = {t.name: t for t in tools}
     # AGENT_MODEL, forced to call a tool every turn (the model ends with the Done tool)
     llm_with_tools = tool_llm("agent", list(tools), tool_choice="required")

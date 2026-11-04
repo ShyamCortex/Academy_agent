@@ -18,8 +18,8 @@ All messages must be **synthetic**: made up, or rewritten so no real child or pa
 | `language` | yes | `en`, `te` (Telugu script) or `tenglish` (Telugu in English letters). Plan: at least 8 `te`/`tenglish`. |
 | `text` | yes | The parent's message. |
 | `expected_label` | yes | One of `book_demo`, `fees_plans`, `schedule`, `workshop_tournament`, `reschedule_cancel`, `sensitive`, `ignore`. |
-| `expected_tool_calls` | yes | Tools a good run calls, lower case, from `find_demo_slots`, `get_fee_plans`, `get_batches`, `get_upcoming_events`, `create_demo_event`, `send_reply`, `question`, `done`. Order is not checked. Must be `[]` for `sensitive` and `ignore`. |
-| `must_include` | yes | Facts the reply must contain (list of short sentences, may be empty). Say where the fact comes from, e.g. "Fee exactly as returned by get_fee_plans". |
+| `expected_tool_calls` | yes | Tools a good run calls, lower case, from `find_demo_slots`, `get_plans`, `get_batch_timings`, `get_workshops`, `get_tournaments`, `create_demo_event`, `reschedule_demo`, `cancel_demo`, `send_reply`, `question`, `done`. Order is not checked. Must be `[]` for `sensitive` and `ignore`. |
+| `must_include` | yes | Facts the reply must contain (list of short sentences, may be empty). Say where the fact comes from, e.g. "Fee exactly as returned by get_plans". |
 | `must_not_say` | yes | Things the reply must not say (list, may be empty), e.g. "A fee that did not come from a tool", "Any chess advice". |
 | `sender` | no | Display name and address. Default: `Parent <parent@example.invalid>`. |
 | `sample` | no | `true` on the sample rows only. A finished set must have none. |

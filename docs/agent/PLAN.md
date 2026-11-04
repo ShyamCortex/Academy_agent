@@ -19,16 +19,18 @@ Everything else is in [Later](#later-not-in-the-22-nov-core).
 | 8 | **Local outbox approved:** approved replies go to a local file; calendar booking stays real. | Shyam |
 | 9 | The core runs on a **labelled message dataset** (CLI / LangGraph Studio), not a live inbox. The README must say so and list Gmail send/ingest under Later. | Shyam |
 | 10 | Test Supabase project and Google test calendar ready by **8 Nov**. | Shyam |
+| 11 | **Phase 2 and Phase 4 are built together** on one branch, to be code-complete in one day. | Shyam |
+| 12 | Read-tool names are now `get_plans`, `get_batch_timings`, `get_workshops`, `get_tournaments` (replacing the Phase 1 mock names `get_fee_plans`, `get_batches`, `get_upcoming_events`). The allow-list holds only the five read-only tools. | Shyam |
 
 ## Status
 
 | Phase | What | Branch | Hours | Needs from you first | Target date | Status |
 |---|---|---|---|---|---|---|
 | 1a | Run on Gemini + Groq via env vars | `phase/1a-models` | 3 | API keys in `.env` | 3–5 Nov | **Done, merged** (PR #3). Laptop: `--ping` all PASS; upstream real tests 11/16 (see [Phase 1a results](#phase-1a-results-from-the-laptop)) |
-| 1 | Retarget: 7 labels, prompts, sensitive route, data format | `claude/phase-1a-test-failures-5bplly` (name set by the cloud session) | 5 | — | 6–8 Nov | **Code done, 154 no-key tests pass; PR open; laptop triage run on the 3 samples pending** |
-| 2 | Real tools + approval + sensitive block in code | `phase/2-tools-guards` | 8 | Test Supabase project + SQL files, Google test calendar + OAuth | 9–14 Nov | Not started |
+| 1 | Retarget: 7 labels, prompts, sensitive route, data format | `claude/phase-1a-test-failures-5bplly` (name set by the cloud session) | 5 | — | 6–8 Nov | **Done, merged** (PR #4). Laptop triage run: 3/3 on the 3 samples (`docs/agent/results/triage_accuracy_20261104_132258.json`). |
+| 2 | Real tools + approval + sensitive block in code | `claude/kind-bell-u63k9h` (name set by the cloud session; built together with Phase 4) | 8 | Test Supabase project + SQL files, Google test calendar + OAuth | 9–14 Nov | **Code done in the cloud, 324 no-key tests pass (also with `USE_MCP=1`); PR open; laptop steps pending** ([`LAPTOP_SETUP.md`](LAPTOP_SETUP.md)) |
 | 5 | Safety evals (core subset) | `phase/5-evals` | 5 | The 40 messages (dev 30 by 13 Nov) | 15–17 Nov | Not started |
-| 4 | Small MCP server (read-only) | `phase/4-mcp` | 2 | — | 18 Nov | Not started |
+| 4 | Small MCP server (read-only) | same branch as Phase 2 | 2 | — | 18 Nov | **Code done in the cloud, same PR as Phase 2; laptop check pending** |
 | 3 | Light RAG over the FAQ | `phase/3-rag` | 3.5 | FAQ text by 17 Nov | 18–19 Nov | Not started |
 | 7 | README + demo video | `phase/7-show` | 3.5 | You record the video | 20–22 Nov | Not started |
 | | **Total** | | **30** | | | |
@@ -234,6 +236,53 @@ send_reply to a local outbox (approval), ApprovalPolicy allow-list, and the sens
 double-block, each with no-key tests that try to break them. Push, update PLAN.md, laptop
 commands, teach-back.
 ```
+
+---
+
+### Phase 2 — built (what differs from the plan above)
+
+Tools (all dates are plain strings in India time, parsed in code):
+
+| Tool | Kind | Approval | Backend |
+|---|---|---|---|
+| `find_demo_slots(date_from, date_to)` | read | no | Calendar `events.list` + academy hours from `config.py` |
+| `get_plans()`, `get_batch_timings()`, `get_workshops()`, `get_tournaments()` | read | no | Test Supabase project, `GET` only, anon key |
+| `create_demo_event(parent_email, child_first_name, start, end)` | write | **yes** | Calendar `events.insert` on `GOOGLE_CALENDAR_ID` |
+| `reschedule_demo(parent_email, child_first_name, new_start, new_end)` | write | **yes** | Calendar `events.patch` |
+| `cancel_demo(parent_email, child_first_name)` | write | **yes** | Calendar `events.delete` |
+| `send_reply(to, subject, body)` | write | **yes** | Local outbox file `outbox/academy_outbox.jsonl` (git-ignored). Nothing is emailed. |
+
+Choices that differ from the first draft:
+- **`events.list`, not `freebusy`.** One narrow OAuth scope (`calendar.events`) covers list, insert, patch and delete (read from the Calendar API description bundled in `google-api-python-client`). `events.list` also returns event ids, so a reschedule can ignore the event it is moving. Trade-off: the busy check sees only events, not a calendar's working-hours settings.
+- **Reschedule and cancel find the event themselves.** The model has no event id, so the tools look the event up by the parent's email and the child's first name. Google stores only a **hash** of the email and the lower-case first name as hidden event labels, so the parent's email is not stored in the calendar. If zero or several events match, the tool returns an error and the model asks the owner.
+- **No guest list and `sendUpdates="none"`.** Google never emails the parent. The reply goes through the outbox.
+- **No default calendar.** `GOOGLE_CALENDAR_ID` must be set. The code never falls back to a personal "primary" calendar.
+- **Read-only Supabase client in three layers:** the only method is `select` (GET); the HTTP transport refuses any other method; only an anon or publishable key is accepted (a JWT must have role `anon`). The SQL file also gives `anon` SELECT only, with RLS on and no insert/update/delete policy. The tables are `plans`, `batches`, `workshops`, `tournaments`. **They are minimal and modelled on what parents ask about; the cloud session did not have your real SQL files**, so adjust the column names if you want them closer to EduChess.
+- **Seed rows are generated** from `config.py` (`python -m email_assistant.academy.seed_sql --write`). A test fails if the SQL file and `config.py` differ.
+- **Source scan test:** every academy module that mentions Supabase is scanned for service-key words, extra Supabase setting names and write-method calls. Four deliberate breakages (add `.post`, name a service key, let POST through the transport, accept any key) each make a test fail.
+- **Approval is still deny-by-default.** `READ_ONLY_TOOLS` is the five lookups. The old mock names were removed because those tools no longer exist.
+- **Create-time checks in code** (not only in the prompt): input must be valid, in the future, at most 2 hours long, not overlapping any event, and the child must not already have a demo booked.
+- **Dates in prompts:** unchanged from Phase 1 (`today_text()` per call). The weekday name no longer depends on the computer's language.
+- New sample `SAMPLE-04` (a `book_demo` message that asks for the earliest slot) lets the end-to-end run book without date guesses.
+
+New files: `settings.py`, `dates.py`, `calendar_backend.py`, `calendar_tools.py`, `data_client.py`, `data_tools.py`, `outbox.py`, `seed_sql.py`, `google_auth.py`, `e2e.py`, `supabase/academy_test_schema.sql`.
+
+### Phase 4 — built (what differs from the plan)
+
+- `mcp_server.py` uses the official `mcp` SDK, **pinned to 2.3.0**. It offers exactly the five tools on `READ_ONLY_TOOLS`, built from the same tool objects the graph uses, and refuses to start if one is not on the list. Each tool is marked read-only.
+- `mcp_bridge.py` is a synchronous client (one background thread, one open session). `USE_MCP=1` swaps the five read tools for proxies with the same name, description and argument schema (checked: the model-facing schema is identical). Write tools, `Question` and `Done` stay in-process and keep asking the owner. The proxies are created without starting anything, so importing the graph never starts a process.
+- The server runs as a child process and receives only the settings it needs (Supabase URL and anon key, calendar id, Google file paths). It does not get the model keys or the LangSmith key.
+- **MCP 2.x hides the text of unexpected errors from clients.** A missing `ACADEMY_SUPABASE_URL` would show only "Error executing tool get_plans". The server therefore passes settings errors on as `ToolError`, so the variable name reaches you. Other crashes stay hidden.
+- **Same tests both ways:** `tests/unit/conftest.py` gives every test a fake calendar, a pretend Supabase, a fixed clock and a temp outbox, and with `USE_MCP=1` routes the read tools through an in-process MCP server. `pytest tests/unit` passes 324 tests with MCP off and with MCP on. `test_academy_mcp.py` also proves the calls really go through MCP and that a whole booking flow gives identical results both ways.
+- Not done: `search_faq` (joins in Phase 3).
+
+### `model_check --list` fix
+
+The Google list failed with `RuntimeError: Cannot send a request, as the client has been closed`. Cause: `genai.Client().models.list()` returns a lazy list, and the temporary `Client` is freed (and closes its HTTP client) before the list is read. Fix: keep the client in a `with` block and read the list inside it. The error was reproduced with the real `google-genai` client against a local stub of the Gemini API; the regression test (`test_model_check_list.py`) fails on the old code and passes on the new.
+
+### Phase 2 + 4 — not verified in the cloud
+
+These need your laptop (see [`LAPTOP_SETUP.md`](LAPTOP_SETUP.md)): real Google OAuth and Calendar calls; real Supabase queries (PostgREST filter and order syntax); the Groq model picking the right tools and arguments for `SAMPLE-04`; the Studio resume box (the guide says to resume with `[{"type": "accept"}]`; the same shape was tested through the LangGraph SDK against a real `langgraph dev` server with fake models).
 
 ---
 

@@ -451,3 +451,16 @@ Deprecation seen at runtime: `StateGraph(State, input=StateInput)` →
 | Tests that run with no keys | 31 tests in `tests/unit/` (was 0). |
 | `uv.lock` | Refreshed in its own commit; `uv lock --check` passes. |
 | `.env` and `tests/run_all_tests.py` | `run_all_tests.py` changes into `tests/` before starting pytest, and the code loads `.env` relative to the current folder, so a `.env` in the repo root is **not** found (verified). Run pytest from the repo root instead, or export the variables. |
+
+---
+
+## 14. Addendum from Phase 2 + 4 (2026-11-04)
+
+| Item | Finding |
+|---|---|
+| Calendar scope | `calendar.events` alone allows `events.list/insert/patch/delete` (read from the Calendar API description bundled in `google-api-python-client`). `freebusy.query` would need a second scope, so the code uses `events.list`. |
+| MCP SDK | `mcp` 2.3.0 has `MCPServer` (not `FastMCP`) and `mcp.Client`, which connects to a server object in-process or to a stdio command. Unexpected tool errors reach the client as the generic text "Error executing tool <name>"; only `ToolError` carries its message. |
+| `model_check --list` | A temporary `genai.Client()` is freed right after `.models.list()` returns a lazy pager; the client closes itself in `__del__`, so reading the pager fails. Reproduced offline with `GOOGLE_GEMINI_BASE_URL` pointing to a local stub. |
+| Supabase keys | Two key styles exist: legacy JWT keys (the middle part holds `"role"`) and `sb_publishable_` / `sb_secret_` keys. The client accepts only `role == anon` or `sb_publishable_`. |
+| Tests that run with no keys | 324 in `tests/unit/` (was 156), with MCP off and on. |
+| Lock | `mcp` pinned to 2.3.0 and `httpx` made explicit; `sse-starlette` moved from 2.1.3 to 3.6.0 as a dependency of `mcp`. `langgraph dev` still starts. |

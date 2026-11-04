@@ -18,30 +18,34 @@ def _drafting(*script):
     return ScriptedModel(*script)
 
 
-def test_the_allow_list_is_exactly_the_four_lookups():
-    assert READ_ONLY_TOOLS == {"find_demo_slots", "get_fee_plans", "get_batches", "get_upcoming_events"}
+def test_the_allow_list_is_exactly_the_five_lookups():
+    assert READ_ONLY_TOOLS == {"find_demo_slots", "get_plans", "get_batch_timings", "get_workshops", "get_tournaments"}
     assert {t.name for t in ACADEMY_TOOLS} >= READ_ONLY_TOOLS  # and every one is a real tool
 
 
-@pytest.mark.parametrize("name", ["create_demo_event", "send_reply", "Question", "anything_new", "FIND_DEMO_SLOTS", "find_demo_slots ", ""])
+@pytest.mark.parametrize("name", ["create_demo_event", "reschedule_demo", "cancel_demo", "send_reply", "Question", "anything_new",
+                                  "get_fee_plans", "get_batches", "FIND_DEMO_SLOTS", "find_demo_slots ", ""])
 def test_everything_off_the_list_needs_approval(name):
     assert needs_approval(name)
 
 
 def test_a_read_only_tool_runs_without_asking():
-    agent = _drafting(tool_call_message("get_fee_plans"), tool_call_message("Done", done=True))
+    agent = _drafting(tool_call_message("get_plans"), tool_call_message("Done", done=True))
     with use_fake_models(triage=triage_says("fees_plans"), agent=agent):
         run = Run()
         result = run.start()
     assert "__interrupt__" not in result
     tool_message = next(m for m in result["messages"] if m.type == "tool")
-    assert json.loads(tool_message.content)["fee_plans"]
+    assert json.loads(tool_message.content)["plans"]
 
 
 @pytest.mark.parametrize("tool_name,args", [
     ("send_reply", {"to": "p@example.invalid", "subject": "Re", "body": "Hello"}),
     ("create_demo_event", {"parent_email": "p@example.invalid", "child_first_name": "Arjun",
                            "start": "2026-11-07T14:00", "end": "2026-11-07T14:45"}),
+    ("reschedule_demo", {"parent_email": "p@example.invalid", "child_first_name": "Arjun",
+                         "new_start": "2026-11-09T17:00", "new_end": "2026-11-09T17:45"}),
+    ("cancel_demo", {"parent_email": "p@example.invalid", "child_first_name": "Arjun"}),
 ])
 def test_academy_write_tools_wait_for_the_owner(tool_name, args):
     agent = _drafting(tool_call_message(tool_name, **args), tool_call_message("Done", done=True))

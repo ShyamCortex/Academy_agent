@@ -22,9 +22,9 @@ def _write(tmp_path, *rows):
     return path
 
 
-def test_the_three_samples_are_valid_and_marked_sample():
+def test_the_samples_are_valid_and_marked_sample():
     rows = load_messages(SAMPLES)
-    assert [r.id for r in rows] == ["SAMPLE-01", "SAMPLE-02", "SAMPLE-03"]
+    assert [r.id for r in rows] == ["SAMPLE-01", "SAMPLE-02", "SAMPLE-03", "SAMPLE-04"]
     assert all(r.sample for r in rows)
     assert {r.expected_label for r in rows} <= set(LABELS)
     assert "sensitive" in {r.expected_label for r in rows}
@@ -97,7 +97,7 @@ def _forty(**changes):
     rows = []
     for i in range(40):
         rows.append(Message(id=f"m-{i}", split="dev" if i < 30 else "heldout", language="tenglish" if i < 8 else "en",
-                            text="x", expected_label="schedule", expected_tool_calls=["get_batches"],
+                            text="x", expected_label="schedule", expected_tool_calls=["get_batch_timings"],
                             must_include=["a"], must_not_say=["b"]))
     return rows
 
@@ -107,7 +107,7 @@ def test_a_finished_set_of_forty_passes_the_full_check():
 
 
 def test_the_full_check_catches_wrong_counts_and_samples():
-    assert check_full_set(load_messages(SAMPLES))  # 3 samples are not a finished set
+    assert check_full_set(load_messages(SAMPLES))  # 4 samples are not a finished set
     short = _forty()[:39]
     assert any("40" in p for p in check_full_set(short))
     wrong_split = [Message(**{**m.__dict__, "split": "dev"}) for m in _forty()]

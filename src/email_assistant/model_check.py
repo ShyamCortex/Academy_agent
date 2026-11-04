@@ -51,28 +51,42 @@ def show_config() -> None:
         print(f"  {var:18} {'set' if os.environ.get(var) else 'missing'}")
 
 
-def list_models() -> None:
-    """Print the model ids each provider says your key can use."""
-    try:
-        from google import genai
+def google_model_ids() -> list[str]:
+    """Gemini model ids this key can use for text generation.
 
-        names = sorted(
+    The client must stay open while the list is read: `models.list()` returns a lazy pager that fetches
+    pages as you loop, and a client that is no longer referenced closes its HTTP connection. (Writing
+    `genai.Client().models.list()` freed the client at once and failed with "Cannot send a request, as
+    the client has been closed".) So the client lives in a `with` block and the pager is read inside it.
+    """
+    from google import genai
+
+    with genai.Client() as client:  # reads GOOGLE_API_KEY / GEMINI_API_KEY itself
+        return sorted(
             m.name.removeprefix("models/")
-            for m in genai.Client().models.list()  # reads GOOGLE_API_KEY / GEMINI_API_KEY itself
+            for m in client.models.list()
             if "generateContent" in (m.supported_actions or []) and "gemini" in m.name
         )
-        print("Google (use as google_genai:<id>):")
-        print("  " + "\n  ".join(names))
-    except Exception as exc:
-        print(f"Google: could not list models: {type(exc).__name__}: {_scrub(str(exc))[:200]}")
-    try:
-        from groq import Groq
 
-        ids = sorted(m.id for m in Groq().models.list().data)  # reads GROQ_API_KEY itself
-        print("Groq (use as groq:<id>):")
+
+def groq_model_ids() -> list[str]:
+    """Groq model ids this key can use."""
+    from groq import Groq
+
+    with Groq() as client:  # reads GROQ_API_KEY itself
+        return sorted(m.id for m in client.models.list().data)
+
+
+def list_models() -> None:
+    """Print the model ids each provider says your key can use."""
+    for title, fetch in (("Google (use as google_genai:<id>)", google_model_ids), ("Groq (use as groq:<id>)", groq_model_ids)):
+        try:
+            ids = fetch()
+        except Exception as exc:
+            print(f"{title.split(' (')[0]}: could not list models: {type(exc).__name__}: {_scrub(str(exc))[:200]}")
+            continue
+        print(f"{title}:")
         print("  " + "\n  ".join(ids))
-    except Exception as exc:
-        print(f"Groq: could not list models: {type(exc).__name__}: {_scrub(str(exc))[:200]}")
 
 
 def _check(label: str, fn: Callable[[], str]) -> bool:
