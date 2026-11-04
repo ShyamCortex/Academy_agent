@@ -13,3 +13,7 @@ Never message text and never a drafted reply (hard rule 5). Replies stay in the 
 | `heldout_lock.json` | same, with `--heldout` | Records that the held-out run was made. A second run needs `--force`. Commit it. |
 
 Run ids: `dev-<YYYYMMDD>` for a dev run, `heldout` for the held-out run.
+
+Row fields added in eval v2 (v1 files do not have them and are never rewritten; readers treat a missing key as "no problem found"):
+`numbers.wrong_weekday` (weekday names written next to a date that do not match it, in the draft's own wording, for example `Tuesday, 7 Nov`) and
+`judge.dates_match_tools` (the judge's yes/no on weekdays and dates against the tool results).

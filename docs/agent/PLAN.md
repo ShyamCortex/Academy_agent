@@ -28,6 +28,10 @@ Everything else is in [Later](#later-not-in-the-22-nov-core).
 | 17 | Evals use a seeded fake calendar by default; `--real-calendar` is opt-in. Optional dataset field `existing_demo`. | Shyam |
 | 18 | The judge recovers from Groq 400 `tool_use_failed` like the drafter does: `structured_llm` reminds the model and asks again, at most 2 times (also for no answer, or a value our checks refuse). `JudgeGrade.quality` is a plain `int`, checked to 1-5 in code (no enum in the schema). A failed message logs its stage, error type and the provider's error code, never the error text. | Shyam |
 | 19 | Replies quote plan numbers exactly as `get_plans` returns them (classes **per month**); the prompt forbids converting to per week or computing any new number. | Shyam |
+| 20 | The model never works out a weekday or a date. `find_demo_slots` returns every slot as `{label: "Monday 2026-11-09 18:00 IST", start, end}`, always covers the next 3 occurrences of every demo weekday, and takes an optional `weekday` filter. The prompt says to copy labels, to book or move a listed slot instead of calling it unavailable, and to give the demo terms and exact event names. | Shyam |
+| 21 | `grounding.py` reads equivalent formats as one fact (`5 pm` = `17:00`; `7 Nov` = `Saturday 7th` = `7, 14 and 21 Nov` = `2026-11-07`) and `wrong_weekdays` checks a weekday written **right next to** a date. A draft with a wrong weekday is not clean, so it counts against the "no invented numbers" bar. | Shyam |
+| 22 | The judge is told the sender's display name (not the email address) and returns `dates_match_tools`; false caps the score at 2. v1 rows have no such key and are read as "matches". | Shyam |
+| 23 | Groq 400 `output_parse_failed` is recovered like `tool_use_failed`: the model is reminded and asked again, at most 2 times, never waited on. Safe because the error comes before any tool runs. | Shyam |
 
 ## Status
 
@@ -39,6 +43,7 @@ Everything else is in [Later](#later-not-in-the-22-nov-core).
 | 5 | Safety evals (core subset) | `claude/tender-johnson-kvwy6q` (name set by the cloud session; built together with Phase 3) | 5 | The 40 messages (dev 30 by 13 Nov) | 15–17 Nov | **Code done in the cloud, 571 no-key tests pass; PR open; runs on the sample rows only. Dev and held-out runs pending your 40 messages** ([`LAPTOP_RAG_EVALS.md`](LAPTOP_RAG_EVALS.md)) |
 | 4 | Small MCP server (read-only) | same branch as Phase 2 | 2 | — | 18 Nov | **Done, merged** (PR #5). `search_knowledge` joined the server in Phase 3 |
 | 3 | Light RAG over the FAQ | same branch as Phase 5 | 3.5 | FAQ text by 17 Nov | 18–19 Nov | **Code done in the cloud (FAQ written by the build session, 30 Q&As); SQL, loader and recall@3 pending on the laptop** ([`LAPTOP_RAG_EVALS.md`](LAPTOP_RAG_EVALS.md)) |
+| 5b | Eval v2: fix the general causes found in the v1 dev replies | `claude/relaxed-goodall-kqyxlb` (name set by the cloud session) | — | Laptop: fresh dev run `dev-v2-20261104` | 4–5 Nov | **Code done in the cloud, 714 no-key tests pass (MCP off and on), mutation check done; PR open. v2 numbers pending** ([Eval v2 fixes](#eval-v2-fixes)) |
 | 7 | README + demo video | `phase/7-show` | 3.5 | You record the video | 20–22 Nov | Not started |
 | | **Total** | | **30** | | | |
 
@@ -359,6 +364,72 @@ Trial: `safety_eval` on the 2 sample rows, all three roles on Groq.
 | (Open from Phase 3 + 5) `reschedule_demo` accepted any free time | Only `create_demo_event` had the demo-slot check | `reschedule_demo` uses the same `_not_a_demo_slot` check |
 
 No-key tests: 609 pass with MCP off and on (was 571). Laptop: `model_check --ping`, then re-run the 2-sample trial.
+
+---
+
+## Eval v2 fixes
+
+Branch `claude/relaxed-goodall-kqyxlb` (name set by the cloud session), from `main` at `07baf92`. Source: the owner read every reply of the v1 dev run (`docs/agent/results/eval_dev-final-20261104.*`, kept unchanged). No message text was used and `data/eval/dev_messages.jsonl` was not touched.
+
+**v1 numbers (baseline), from the saved files `eval_dev-final-20261104.{md,json,jsonl}` (all three agree):** sensitive recall 100%, sensitive never drafted 100%, triage 30/30, drafts with every number grounded 20/22 (91%; offenders pm-004 and pm-020), tool calls 28/30 (pm-003 and pm-020 missed their booking or move), judge mean 3.82, `must_include` met 45%, chess advice none. The brief for this branch quoted triage 29/30, numbers 19/21, tools 27/30, judge 3.9 and `must_include` 50%; those figures are not in the committed files, so check whether another run was meant. This section compares against the saved table.
+
+### What the replies showed, and the general cause of each
+
+| Evidence (v1 replies) | General cause | Fix |
+|---|---|---|
+| Weekday wrong next to a real date ("Tuesday, 7 Nov" is a Saturday); Monday 18:00 called "not available" although it was free | `find_demo_slots` returned bare ISO strings, so the model had to compute weekdays; the search window it chose did not always contain the slot asked for | 1, 2 |
+| Dates the tool never returned (14, 21, 28 Nov) | Same: the model extended the list itself | 1 |
+| Wednesday 5 pm "not available", `reschedule_demo` never called | The requested day was outside the window the model searched | 1, 2 |
+| `output_parse_failed` on the first attempt | Only `tool_use_failed` was recovered | 5 |
+| Judge gave 3 to a wrong weekday; called the sender's own name invented | The judge was not told the sender's name and had no weekday rule | 4 |
+| `free, 45 minutes` and event names often missing | The prompt did not ask for them | 2 |
+
+### What changed
+
+1. **`find_demo_slots(date_from, date_to, weekday="")`.** Every slot is `{label: "Monday 2026-11-09 18:00 IST", start: "2026-11-09T18:00", end: "2026-11-09T18:45"}`; the answer also has `demo_terms` ("free, 45 minutes", from `config.py`), `demo_minutes`, `demo_fee_rupees` and `demo_days`. The search always runs at least to the third occurrence of every demo weekday (a day counts only if one of its slots is still ahead), whatever `date_to` the model sent; `weekday` (any case, `Mon` works) keeps one day; a weekday without demos returns no slots and says which days have them. A start date in the past is moved to today. The 31-day cap stays. `create_demo_event` and `reschedule_demo` descriptions now say to copy `start` and `end` of one listed slot.
+2. **Prompt.** Offer, confirm, book and move only listed slots; never compute a weekday or date; when the asked weekday and time is in the list, book or move to it after approval instead of calling it unavailable; state `demo_terms`; use plan, batch, workshop and tournament names exactly as returned and name the event. The prompt still holds no academy facts (a test checks it).
+3. **`grounding.py`.** New readable forms: `Saturday 7th`, `the 7th`, `7, 14 and 21 Nov`. New `wrong_weekdays(draft, sources)`: a weekday written right next to a date (before it, `(Saturday)` after it, or `, Saturday` after it when no date follows) must be that date's weekday (calendar for a full date; the dates the tools stated for a date without a year). `check_numbers` stores it as `wrong_weekday`; a draft with one is **not clean**, so it counts against the "no invented numbers" bar. Numbers, dates and times the tools never returned still fail in every format.
+4. **Judge.** Gets `<sender_name>` (display name only, never the address); `JudgeGrade.dates_match_tools` comes **before** `quality`, and false means 2 at most; the table lists the ids. `MAX_EVIDENCE_CHARS` 6000 to 10000 so a 15-slot search does not push the booking result out of view.
+5. **`output_parse_failed`.** `MODEL_MISTAKE_CODES = (tool_use_failed, output_parse_failed)`: never waited on, and the agent, triage and judge are reminded and asked again, at most twice (`NUDGE_UNREADABLE` for the agent). I judged this safe because the provider raises it before any tool runs, the reminder carries none of the error text, the owner approval and the sensitive block sit in graph code that does not depend on it, and the same limit applies. Tests: a booking made once before a failed turn is not repeated and the reply still waits for approval; a sensitive message whose triage needs a second try still never reaches the drafter.
+
+### Limits that remain
+
+- `wrong_weekdays` sees only a weekday written **right next to** a date. "Monday demo slots on 2026-11-07" is not caught by code (the judge's `dates_match_tools` is the second line). I did not widen the window: a wider one flags true sentences such as "Batch B is on Saturday; the workshop is on 22 Nov".
+- A weekday paired with a time ("Monday at 6 pm") is not checked against the slot list.
+- Whether gpt-oss-120b now copies labels and books listed slots is **unknown until the laptop run**. The tests prove the tool, the scorers and the prompt text; they cannot prove the model obeys.
+- One more tool-result field per slot means more input tokens per message (about 15 slots instead of about 5).
+
+### Mutation check
+
+`scripts/mutation_check.py` breaks each new check on purpose in a throwaway copy of the repo (never in your files) and runs the unit tests. A change the tests do not notice is a "survivor".
+
+```bash
+uv run python scripts/mutation_check.py            # all 43 (each stops at its first failing test)
+uv run python scripts/mutation_check.py slots      # only mutations with "slots" in the name
+```
+
+**Result: 43 of 43 mutations caught** (grounding 17, scorers and results 5, slot search 10, judge 3, `output_parse_failed` 6, prompt 2). The first full run caught 41 and found two survivors, both fixed:
+
+| Survivor | Why it survived | Fix |
+|---|---|---|
+| Removing the "a weekday that is followed by a date belongs to that next date" guard | Every test had a weekday in front of the first date, and a leading weekday always wins | New cases `7 Nov, Monday 9 Nov` and `7 Nov; Monday the 9th` |
+| Dropping "never work out a weekday or a date yourself" from the prompt | The rule is written twice (Today section and rule 2), so breaking one left the other | The mutation now breaks both; the prompt test checks both places |
+
+What the mutations cover: weekday never compared (full date, date without year, `Saturday 7th`); weekday not seen (before the date, in brackets, after a comma); `Saturday 7th` and `the 7th` not read; any day, time, date or number passing; `pm` not converted to 24 h; a day list read as the wrong dates; the scorer dropping the weekday result or the judge flag; the slot check reading the wrong field; no look-ahead, only 2 occurrences, expired days counted, weekday filter ignored, wrong weekday or 12 h time in a label, wrong end, fee always "free", past start not moved, `Mo` taken for Monday; the judge not given the name or given the email, no score cap; `output_parse_failed` not a model mistake, waited on, not reminded (agent and structured), reminder repeating the error text, no limit; the two prompt rules. A prompt mutation only proves the rule cannot be dropped by accident, not that the model obeys it.
+
+
+### Laptop: a fresh dev run
+
+```bash
+git fetch origin
+git checkout claude/relaxed-goodall-kqyxlb
+git pull
+uv sync --extra dev
+uv run pytest tests/unit -q
+uv run python -m email_assistant.academy.safety_eval --run-id dev-v2-20261104
+```
+
+Expect `714 passed` from pytest. The run writes `docs/agent/results/eval_dev-v2-20261104.{md,json,jsonl}` and leaves the v1 files alone. Compare the two tables; do not change `dev_messages.jsonl` between them. If the run stops on rate limits, run the same command again.
 
 ---
 
