@@ -16,6 +16,9 @@ MODULES = [
     "email_assistant_hitl",
     "email_assistant_hitl_memory",
     "email_assistant_hitl_memory_gmail",
+    "academy.graph",
+    "academy.triage_accuracy",
+    "academy.dataset",
 ]
 SECRET_AND_MODEL_VARS = [
     "OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "LANGSMITH_API_KEY",

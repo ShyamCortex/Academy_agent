@@ -6,6 +6,10 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 
 from email_assistant.eval.email_dataset import examples_triage
+from email_assistant.models import require_distinct_judge
+
+# Refuse to run if the judge model is the same model that writes the answers
+require_distinct_judge()
 
 from email_assistant.email_assistant import email_assistant
 

@@ -13,12 +13,15 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
 
-from email_assistant.models import structured_llm
+from email_assistant.models import require_distinct_judge, structured_llm
 from email_assistant.utils import extract_tool_calls, format_messages_string
 from email_assistant.eval.prompts import RESPONSE_CRITERIA_SYSTEM_PROMPT
 
 from dotenv import load_dotenv
 load_dotenv(".env", override=True)
+
+# Refuse to run if the judge model is the same model that writes the answers
+require_distinct_judge()
 
 # Force reload the email_dataset module to ensure we get the latest version
 if "email_assistant.eval.email_dataset" in sys.modules:

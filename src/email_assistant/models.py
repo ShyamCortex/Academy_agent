@@ -86,6 +86,8 @@ def is_retryable(exc: BaseException) -> bool:
     seen: set[int] = set()
     while exc is not None and id(exc) not in seen:  # also look at the error that caused this one
         seen.add(id(exc))
+        if "tool_use_failed" in str(exc).lower():  # the model's own mistake: waiting will not fix it
+            return False
         if _status_code(exc) in RETRYABLE_STATUS_CODES:
             return True
         if type(exc).__name__ in RETRYABLE_ERROR_NAMES:
@@ -113,7 +115,7 @@ def call_with_backoff(
             if attempt >= max_retries or not is_retryable(exc):
                 raise
             wait = min(max_seconds, initial_seconds * 2**attempt)
-            # jitter: wait 50-100% of the planned time so parallel callers do not retry in lockstep
+            # jitter: wait 80-100% of the planned time so parallel callers do not retry in lockstep
             _sleep(wait * random.uniform(0.8, 1.0))
             attempt += 1
 
@@ -135,6 +137,50 @@ def retry_settings() -> tuple[int, float, float]:
         _env_number("MODEL_RETRY_INITIAL_SECONDS", 2.0, float),
         _env_number("MODEL_RETRY_MAX_SECONDS", 60.0, float),
     )
+
+
+# ---------------------------------------------------------------------------
+# Tool-calling mistakes (seen with gpt-oss on Groq)
+# ---------------------------------------------------------------------------
+
+# How many times we ask the model to fix a tool-calling mistake before giving up.
+MAX_NUDGES = 2
+
+NUDGE_NO_TOOL = (
+    "You must reply by calling one of the available tools, not with plain text. "
+    "If the task is complete, call the Done tool."
+)
+NUDGE_BAD_ARGS = (
+    "Your last tool call did not match the tool's argument schema. Call the tool again with valid "
+    "arguments. Dates and times are plain strings in the format the tool describes."
+)
+
+
+class NoToolCallError(RuntimeError):
+    """The model had to call a tool, but answered with plain text."""
+
+
+def tool_call_nudge(exc: BaseException) -> Optional[str]:
+    """If `exc` is a tool-calling mistake the model can fix, return a short reminder for it.
+
+    Two mistakes are known:
+    - "Tool choice is required, but model did not call a tool": a forced tool call, but the
+      model wrote a closing sentence instead (usually because the work was already done).
+    - "tool call validation failed ... did not match schema": the model sent an argument in
+      the wrong shape. Groq checks arguments strictly, e.g. a `datetime` needs seconds and a
+      time zone.
+    The reminder never repeats the model's output or the tool arguments (they may hold personal data).
+    """
+    if isinstance(exc, NoToolCallError):
+        return NUDGE_NO_TOOL
+    text = str(exc).lower()
+    if "tool_use_failed" not in text:
+        return None
+    if "did not call a tool" in text:
+        return NUDGE_NO_TOOL
+    if "validation failed" in text or "did not match schema" in text:
+        return NUDGE_BAD_ARGS
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -161,11 +207,20 @@ def use_fake_models(**fakes: Any):
         _OVERRIDES.update(previous)
 
 
-def _lazy(role: str, shape: Callable[[Any], Runnable], name: str) -> Runnable:
+def _lazy(
+    role: str,
+    shape: Callable[[Any], Runnable],
+    name: str,
+    *,
+    check: Optional[Callable[[Any], None]] = None,
+    recover: Optional[Callable[[BaseException], Optional[str]]] = None,
+) -> Runnable:
     """Build a Runnable that creates the real model on first use and retries on rate limits.
 
     `shape` turns a plain chat model into what the graph needs (tools bound, or
     structured output). It is called once per real model, but on every call for a fake.
+    `check(result)` may raise if the answer is unusable. `recover(error)` may return a reminder
+    to append to the conversation; the call is then repeated (at most MAX_NUDGES times).
     """
     cache: dict[str, Runnable] = {}
 
@@ -176,12 +231,28 @@ def _lazy(role: str, shape: Callable[[Any], Runnable], name: str) -> Runnable:
             cache["chain"] = shape(init_chat_model(model_spec(role), temperature=0.0))
         return cache["chain"]
 
-    def run(value: Any, config: RunnableConfig) -> Any:
+    def attempt(value: Any, config: RunnableConfig) -> Any:
         retries, initial, maximum = retry_settings()
-        return call_with_backoff(
-            lambda: resolve().invoke(value, config),
-            max_retries=retries, initial_seconds=initial, max_seconds=maximum,
-        )
+
+        def once() -> Any:
+            result = resolve().invoke(value, config)
+            if check is not None:
+                check(result)
+            return result
+
+        return call_with_backoff(once, max_retries=retries, initial_seconds=initial, max_seconds=maximum)
+
+    def run(value: Any, config: RunnableConfig) -> Any:
+        nudges = 0
+        while True:
+            try:
+                return attempt(value, config)
+            except Exception as exc:
+                reminder = recover(exc) if recover else None
+                if reminder is None or nudges >= MAX_NUDGES:
+                    raise
+                value = list(value) + [{"role": "user", "content": reminder}]
+                nudges += 1
 
     return RunnableLambda(run, name=name)
 
@@ -192,5 +263,39 @@ def structured_llm(role: str, schema: type) -> Runnable:
 
 
 def tool_llm(role: str, tools: Sequence[Any], tool_choice: Optional[str] = None) -> Runnable:
-    """A model with `tools` available. `tool_choice="required"` or `"any"` forces a tool call."""
-    return _lazy(role, lambda model: model.bind_tools(tools, tool_choice=tool_choice), f"{role}_tools")
+    """A model with `tools` available. `tool_choice="required"` or `"any"` forces a tool call.
+
+    When a tool call is forced and the model still answers in plain text (or sends arguments
+    that break the schema), the model is reminded and asked again, up to MAX_NUDGES times.
+    """
+    forced = tool_choice in ("required", "any")
+
+    def check(result: Any) -> None:
+        if forced and not getattr(result, "tool_calls", None):
+            raise NoToolCallError("The model answered without calling a tool.")
+
+    return _lazy(
+        role, lambda model: model.bind_tools(tools, tool_choice=tool_choice), f"{role}_tools",
+        check=check, recover=tool_call_nudge,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Eval guard
+# ---------------------------------------------------------------------------
+
+def require_distinct_judge() -> None:
+    """Refuse to run an eval when the judge is the same model as the drafter.
+
+    A model grading its own answers is biased towards them. Call this at the start of every
+    eval entry point. If either variable is unset, nothing is checked here: `get_model`-style
+    errors will name the missing variable when the model is first used.
+    """
+    judge = os.environ.get("JUDGE_MODEL", "").strip()
+    agent = os.environ.get("AGENT_MODEL", "").strip()
+    if judge and agent and judge.lower() == agent.lower():
+        raise ModelConfigError(
+            f"JUDGE_MODEL and AGENT_MODEL are both {agent!r}. An eval must not use the same model "
+            "to write and to grade the answers. Set JUDGE_MODEL in .env to a model from a "
+            "different family than AGENT_MODEL (see .env.example)."
+        )
