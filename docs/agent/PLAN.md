@@ -24,8 +24,8 @@ Everything else is in [Later](#later-not-in-the-22-nov-core).
 
 | Phase | What | Branch | Hours | Needs from you first | Target date | Status |
 |---|---|---|---|---|---|---|
-| 1a | Run on Gemini + Groq via env vars | `phase/1a-models` | 3 | API keys in `.env` | 3–5 Nov | Code done + no-key tests pass (31); **real-model run on laptop pending** |
-| 1 | Retarget: 7 labels, prompts, sensitive route, data format | `phase/1-retarget` | 5 | — | 6–8 Nov | Not started |
+| 1a | Run on Gemini + Groq via env vars | `phase/1a-models` | 3 | API keys in `.env` | 3–5 Nov | **Done, merged** (PR #3). Laptop: `--ping` all PASS; upstream real tests 11/16 (see [Phase 1a results](#phase-1a-results-from-the-laptop)) |
+| 1 | Retarget: 7 labels, prompts, sensitive route, data format | `claude/phase-1a-test-failures-5bplly` (name set by the cloud session) | 5 | — | 6–8 Nov | **Code done, 154 no-key tests pass; PR open; laptop triage run on the 3 samples pending** |
 | 2 | Real tools + approval + sensitive block in code | `phase/2-tools-guards` | 8 | Test Supabase project + SQL files, Google test calendar + OAuth | 9–14 Nov | Not started |
 | 5 | Safety evals (core subset) | `phase/5-evals` | 5 | The 40 messages (dev 30 by 13 Nov) | 15–17 Nov | Not started |
 | 4 | Small MCP server (read-only) | `phase/4-mcp` | 2 | — | 18 Nov | Not started |
@@ -95,6 +95,33 @@ new branch from main
 - Verified from the installed package source: `langchain-google-genai` reads `GOOGLE_API_KEY` first, then `GEMINI_API_KEY`; `langchain-groq` reads `GROQ_API_KEY`; the Gemini wrapper maps both `tool_choice="any"` and `"required"` to its forced-tool mode. Whether Gemini obeys it in practice is checked by `--ping` on the laptop.
 - Pydantic moved to 2.14 and langchain to 1.4 when the lock was refreshed.
 
+### Phase 1a results (from the laptop)
+
+Models on Groq's free tier (all three roles; Gemini is not used for now):
+
+| Role | Env var | Value |
+|---|---|---|
+| Triage | `TRIAGE_MODEL` | `groq:openai/gpt-oss-20b` |
+| Drafter / tool use / memory | `AGENT_MODEL` | `groq:openai/gpt-oss-120b` |
+| Judge | `JUDGE_MODEL` | `groq:qwen/qwen3.8-27b` (changed so the judge is a different model family from the drafter; id as given by Shyam, not checked by the cloud session) |
+
+| Check | Result |
+|---|---|
+| `python -m email_assistant.model_check --ping` (all roles) | **PASS** |
+| Upstream real tests, `email_assistant` module | **11 of 16 passed** |
+| Upstream triage eval, "Agent With Router" score | **0.69** (upstream labels; Phase 1 replaces them) |
+
+The 5 failures, classified before Phase 1 started:
+
+| # | Error | Kind | Carries into the academy graph? | Fix (this branch) |
+|---|---|---|---|---|
+| 1, 2, 4, 5 | `Tool choice is required, but model did not call a tool` (the model's text: "The email has been sent...") | **(a)** gpt-oss on Groq | **Yes.** The academy drafter also forces a tool call and ends on `Done`. | `tool_llm` in `models.py` reminds the model to call a tool (or `Done`) and asks again, at most 2 times. Waiting is not retried, since it cannot help. |
+| 3 | `schedule_meeting` arg `preferred_day`: `'2026-11-07T14:00' is not valid date-time` | **(a)** model + tool schema | **Yes.** Phase 2 `create_demo_event(start, end)` would fail the same way. | Academy tools take date/time as plain strings and parse them in code. A test fails if any academy tool schema has `date-time`. The same reminder-and-retry also covers a bad-argument error. |
+
+None of the 5 is (b), specific to the upstream emails or labels. The upstream `email_assistant` graph gets the retry fix too, because it shares `tool_llm`. The upstream `schedule_meeting` tool is left as it is.
+
+Note: `CLAUDE.md` still says "Gemini Flash-Lite / Flash" in its Models section. The running setup is Groq; edit that line by hand if you want the rules file to match.
+
 **Files touched:** `.github/workflows/*` (deleted), `.python-version`, `AGENTS.md`, `CLAUDE.md`, `pyproject.toml`, `uv.lock`, `.env.example`, `src/email_assistant/models.py` (new), 5 graph files, `tests/test_response.py`, `tests/fakes.py` and `tests/unit/` (new).
 
 **Risks:**
@@ -143,6 +170,18 @@ Gemini/Groq/LangSmith keys, then the teach-back.
 
   `split` is `dev` or `heldout`; `lang` is `en`, `te` or `tenglish`. The loader/validator checks fields, labels, unique ids, 30/10 split, and 8 Telugu/Tenglish. The repo ships with **2 obviously fake template rows**; you write the 40.
 - `.github/workflows/tests.yml` runs `tests/unit/` with no keys (replaces the deleted Claude workflows with something free and useful).
+
+**Built (what differs from the plan above):**
+- Graph input key is `message_input` (`from`, `text`, optional `subject`), not an email dict. `graph.py` is a `build_graph(tools=...)` function so tests can add a made-up write tool.
+- Approval is deny-by-default in `guards.py`: `READ_ONLY_TOOLS` is the only list, and it names the four lookups. Anything else, including a tool nobody listed, interrupts. A tool the graph does not have is never run.
+- `sensitive`: no edge to the drafter, the owner's answer at `notify_owner` is never read, and `llm_call` refuses with `SensitiveBlockedError` unless the label is one of the five draftable ones.
+- One tool call per model turn (cut in `llm_call`): resuming after an approval re-runs the tool step, so two approved writes in one turn could run twice.
+- Memory: `response_preferences` only, stored as `{"preferences": text}`. A failed memory update keeps the old text and never repeats an approved action.
+- Dates: `today_text()` reads the clock on each call in `Asia/Kolkata`. Message text is not printed or logged; the upstream `parse_gmail` print is removed.
+- Dataset fields are `id, split, language, text, expected_label, expected_tool_calls, must_include, must_not_say` (+ optional `sender`, `sample`). Samples: `data/eval/sample_messages.jsonl`. Your 40 go in `data/eval/parent_messages.jsonl`; `--full` checks 40 / 30+10 / 8 Telugu.
+- `require_distinct_judge()` in `models.py` stops evals when `JUDGE_MODEL` equals `AGENT_MODEL`. Called from `tests/test_response.py`, `evaluate_triage.py` and the triage script. It compares names only; it cannot know two different names are the same family.
+- `python -m email_assistant.academy.triage_accuracy <jsonl>` prints accuracy overall and per label and saves `docs/agent/results/triage_accuracy_<date>.json` (ids and labels only).
+- Not done: `.github/workflows/tests.yml` (not in this phase's task list; add later).
 
 **Done when:**
 - No-key tests: each label routes per the table; a `sensitive` message ends at `notify_owner`; the validator accepts the template and rejects bad rows.
