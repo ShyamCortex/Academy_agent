@@ -1,0 +1,217 @@
+{
+  "date": "2026-11-04T16:12:41+05:30",
+  "index": "local",
+  "embedding_model": "BAAI/bge-small-en-v1.5",
+  "faq_chunks": 30,
+  "n": 15,
+  "recall@1": 0.8,
+  "recall@3": 1.0,
+  "misses": [],
+  "per_question": [
+    {
+      "id": "rq-01",
+      "lang": "en",
+      "expected": [
+        "demo-free",
+        "demo-free-tenglish"
+      ],
+      "returned": [
+        "demo-free",
+        "demo-other-time",
+        "demo-what-we-need"
+      ],
+      "first_hit_rank": 1
+    },
+    {
+      "id": "rq-02",
+      "lang": "en",
+      "expected": [
+        "demo-length",
+        "demo-free"
+      ],
+      "returned": [
+        "demo-length",
+        "demo-free",
+        "workshop-tournament-tenglish"
+      ],
+      "first_hit_rank": 1
+    },
+    {
+      "id": "rq-03",
+      "lang": "en",
+      "expected": [
+        "demo-days-times"
+      ],
+      "returned": [
+        "demo-days-times",
+        "demo-one-per-child",
+        "demo-book-tenglish"
+      ],
+      "first_hit_rank": 1
+    },
+    {
+      "id": "rq-04",
+      "lang": "en",
+      "expected": [
+        "demo-what-we-need",
+        "demo-how-to-book"
+      ],
+      "returned": [
+        "demo-reschedule",
+        "demo-what-we-need",
+        "demo-how-to-book"
+      ],
+      "first_hit_rank": 2
+    },
+    {
+      "id": "rq-05",
+      "lang": "en",
+      "expected": [
+        "fees-plans",
+        "fees-plans-tenglish"
+      ],
+      "returned": [
+        "fees-plans",
+        "fees-plans-tenglish",
+        "fees-classes-per-plan"
+      ],
+      "first_hit_rank": 1
+    },
+    {
+      "id": "rq-06",
+      "lang": "en",
+      "expected": [
+        "fees-classes-per-plan",
+        "fees-plans"
+      ],
+      "returned": [
+        "fees-classes-per-plan",
+        "demo-one-per-child",
+        "fees-plans"
+      ],
+      "first_hit_rank": 1
+    },
+    {
+      "id": "rq-07",
+      "lang": "en",
+      "expected": [
+        "fees-discounts"
+      ],
+      "returned": [
+        "fees-discounts",
+        "demo-one-per-child",
+        "demo-reschedule"
+      ],
+      "first_hit_rank": 1
+    },
+    {
+      "id": "rq-08",
+      "lang": "en",
+      "expected": [
+        "fees-payment"
+      ],
+      "returned": [
+        "fees-payment",
+        "fees-discounts",
+        "replies-approved"
+      ],
+      "first_hit_rank": 1
+    },
+    {
+      "id": "rq-09",
+      "lang": "en",
+      "expected": [
+        "batches-list",
+        "batches-weekend",
+        "batches-tenglish"
+      ],
+      "returned": [
+        "demo-days-times",
+        "batches-weekend",
+        "batches-weekday"
+      ],
+      "first_hit_rank": 2
+    },
+    {
+      "id": "rq-10",
+      "lang": "en",
+      "expected": [
+        "batches-level",
+        "batches-list"
+      ],
+      "returned": [
+        "demo-other-time",
+        "batches-level",
+        "fees-classes-per-plan"
+      ],
+      "first_hit_rank": 2
+    },
+    {
+      "id": "rq-11",
+      "lang": "en",
+      "expected": [
+        "batches-seats"
+      ],
+      "returned": [
+        "batches-seats",
+        "batches-weekday",
+        "batches-weekend"
+      ],
+      "first_hit_rank": 1
+    },
+    {
+      "id": "rq-12",
+      "lang": "en",
+      "expected": [
+        "tournament-next",
+        "workshop-tournament-tenglish"
+      ],
+      "returned": [
+        "tournament-next",
+        "workshop-tournament-tenglish",
+        "events-register"
+      ],
+      "first_hit_rank": 1
+    },
+    {
+      "id": "rq-13",
+      "lang": "en",
+      "expected": [
+        "demo-reschedule"
+      ],
+      "returned": [
+        "demo-reschedule",
+        "demo-one-per-child",
+        "demo-length"
+      ],
+      "first_hit_rank": 1
+    },
+    {
+      "id": "rq-14",
+      "lang": "en",
+      "expected": [
+        "complaints"
+      ],
+      "returned": [
+        "complaints",
+        "demo-cancel",
+        "demo-reschedule"
+      ],
+      "first_hit_rank": 1
+    },
+    {
+      "id": "rq-15",
+      "lang": "tenglish",
+      "expected": [
+        "workshop-next",
+        "workshop-tournament-tenglish"
+      ],
+      "returned": [
+        "workshop-tournament-tenglish",
+        "workshop-next",
+        "batches-tenglish"
+      ],
+      "first_hit_rank": 1
+    }
+  ]
+}
