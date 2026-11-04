@@ -18,8 +18,8 @@ def _drafting(*script):
     return ScriptedModel(*script)
 
 
-def test_the_allow_list_is_exactly_the_five_lookups():
-    assert READ_ONLY_TOOLS == {"find_demo_slots", "get_plans", "get_batch_timings", "get_workshops", "get_tournaments"}
+def test_the_allow_list_is_exactly_the_six_lookups():
+    assert READ_ONLY_TOOLS == {"find_demo_slots", "get_plans", "get_batch_timings", "get_workshops", "get_tournaments", "search_knowledge"}
     assert {t.name for t in ACADEMY_TOOLS} >= READ_ONLY_TOOLS  # and every one is a real tool
 
 

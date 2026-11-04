@@ -1,14 +1,14 @@
 """Read-only client for the TEST Supabase project (hard rule 4).
 
 Three layers keep it read-only, so one mistake is not enough to write:
-1. The only public method is `select`, and it can only send GET.
+1. The only public methods are `select` and `match_faq` (FAQ search), and both only send GET.
 2. The HTTP transport refuses any request that is not GET, even if someone later adds a call.
 3. It accepts only an anon (public) key. A key that is not provably an anon key is refused.
    In the database, the anon role has SELECT permission only (`supabase/academy_test_schema.sql`).
 
 Settings (in `.env`): ACADEMY_SUPABASE_URL and ACADEMY_SUPABASE_ANON_KEY of the separate test project.
-There is no other key and no other project. The FAQ loader (a later phase) is the only writer
-and it is a different program, run on the owner's laptop.
+There is no other key and no other project. The FAQ loader (a script in the top-level `scripts/` folder, outside this package) is
+the only writer. It is a different program, run on the owner's laptop, and nothing in `src/` imports it.
 """
 
 import base64
@@ -16,7 +16,7 @@ import json
 import threading
 import time
 from contextlib import contextmanager
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, Sequence
 from urllib.parse import urlsplit
 
 import httpx
@@ -25,6 +25,10 @@ from email_assistant.academy import settings
 
 # Tables the agent may read. Any other table name is refused before a request is made.
 READABLE_TABLES = frozenset({"plans", "batches", "workshops", "tournaments"})
+# The one database function the agent may call: FAQ search (`supabase/academy_faq_rag.sql`). It is declared
+# `stable`, so PostgREST accepts it over GET and runs it in a read-only transaction.
+FAQ_MATCH_FUNCTION = "match_faq"
+MAX_FAQ_MATCHES = 5
 
 PUBLISHABLE_PREFIX = "sb_publishable_"  # Supabase's new-style public key
 RETRY_STATUS = {429, 500, 502, 503, 504}
@@ -122,10 +126,24 @@ class ReadOnlyRest:
         params = {"select": columns, **(filters or {}), "limit": str(limit)}
         if order:
             params["order"] = order
+        return self._get(table, params)
+
+    def match_faq(self, embedding: Sequence[float], count: int = 3) -> list[dict[str, Any]]:
+        """The FAQ chunks closest to `embedding`, best first (a GET of the `match_faq` function).
+
+        This is the only function the client can call. The name is fixed here on purpose: there is no
+        general "call any function" method, because a database function can write.
+        """
+        if not 1 <= count <= MAX_FAQ_MATCHES:
+            raise ValueError(f"count must be between 1 and {MAX_FAQ_MATCHES}.")
+        vector = "[" + ",".join(f"{float(x):.5f}" for x in embedding) + "]"
+        return self._get(f"rpc/{FAQ_MATCH_FUNCTION}", {"query_embedding": vector, "match_count": str(count)})
+
+    def _get(self, path: str, params: dict[str, str]) -> list[dict[str, Any]]:
         for attempt in range(self._attempts):
             last = attempt == self._attempts - 1
             try:
-                response = self._http.get(table, params=params)
+                response = self._http.get(path, params=params)
             except httpx.TransportError:
                 if last:
                     raise DataSourceError("The data source could not be reached.") from None

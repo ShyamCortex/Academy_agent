@@ -1,6 +1,6 @@
 """The academy tool set, in one place.
 
-    read-only (no approval)   find_demo_slots, get_plans, get_batch_timings, get_workshops, get_tournaments
+    read-only (no approval)   find_demo_slots, get_plans, get_batch_timings, get_workshops, get_tournaments, search_knowledge
     write (owner approves)    create_demo_event, reschedule_demo, cancel_demo, send_reply
     signals                   Question (ask the owner), Done (finish)
 
@@ -17,10 +17,11 @@ from langchain_core.tools import BaseTool
 from email_assistant.academy import settings
 from email_assistant.academy.calendar_tools import CALENDAR_READ_TOOLS, CALENDAR_WRITE_TOOLS
 from email_assistant.academy.data_tools import DATA_TOOLS
+from email_assistant.academy.knowledge_tools import KNOWLEDGE_TOOLS
 from email_assistant.academy.outbox import send_reply
 from email_assistant.tools.default.email_tools import Done, Question
 
-READ_ONLY_TOOL_OBJECTS: list[BaseTool] = [*CALENDAR_READ_TOOLS, *DATA_TOOLS]
+READ_ONLY_TOOL_OBJECTS: list[BaseTool] = [*CALENDAR_READ_TOOLS, *DATA_TOOLS, *KNOWLEDGE_TOOLS]
 WRITE_TOOLS: list[BaseTool] = [*CALENDAR_WRITE_TOOLS, send_reply]
 
 ACADEMY_TOOLS = [*READ_ONLY_TOOL_OBJECTS, *WRITE_TOOLS, Question, Done]
@@ -41,10 +42,11 @@ TOOLS_PROMPT = """
 3. get_batch_timings() - the regular batches: days, time, level, seats left. Read-only.
 4. get_workshops() - upcoming workshops: date, fee, seats left. Read-only.
 5. get_tournaments() - upcoming tournaments: date, entry fee, seats left. Read-only.
-6. create_demo_event(parent_email, child_first_name, start, end) - book a demo class. start and end are strings like 2026-11-07T14:00. The owner approves first.
-7. reschedule_demo(parent_email, child_first_name, new_start, new_end) - move a booked demo class. The owner approves first.
-8. cancel_demo(parent_email, child_first_name) - cancel a booked demo class. The owner approves first.
-9. send_reply(to, subject, body) - reply to the parent. to is the parent's email address. The owner approves first.
-10. Question(content) - ask the owner when you are missing information a tool cannot give.
-11. Done - the task is finished.
+6. search_knowledge(question) - search the academy FAQ (how to book, payment, discounts, complaints, what the assistant can do). Returns the 3 closest FAQ answers with a similarity score. Read-only. For live fees, seats and dates use tools 2-5; if they differ from an FAQ answer, the live tool is right. If no FAQ answer fits, ask the owner with Question. Do not make up an answer.
+7. create_demo_event(parent_email, child_first_name, start, end) - book a demo class. start and end are strings like 2026-11-07T14:00. The owner approves first.
+8. reschedule_demo(parent_email, child_first_name, new_start, new_end) - move a booked demo class. The owner approves first.
+9. cancel_demo(parent_email, child_first_name) - cancel a booked demo class. The owner approves first.
+10. send_reply(to, subject, body) - reply to the parent. to is the parent's email address. The owner approves first.
+11. Question(content) - ask the owner when you are missing information a tool cannot give.
+12. Done - the task is finished.
 """

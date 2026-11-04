@@ -49,3 +49,36 @@ class ScriptedModel:
 def tool_call_message(name: str, **args) -> AIMessage:
     """An AI message that asks to call one tool, like a real model does."""
     return AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": f"call_{next(_call_ids)}"}])
+
+
+class HashingEmbedder:
+    """A fake embedder for tests: a bag of words, hashed into 384 slots. No model, no download, same result every time.
+
+    It matches by shared words only (not by meaning), so it proves the plumbing, not the quality of a real model.
+    """
+
+    model_name = "hashing-fake"
+    STOP = frozenset("a an the is are do does i we you my your of to for in on at it be can how what when which who".split())
+
+    def __init__(self, dim: int = 384):
+        self.dim = dim
+        self.queries: list[str] = []
+
+    def _vector(self, text: str) -> list[float]:
+        import math
+        import re
+        import zlib
+
+        vector = [0.0] * self.dim
+        for word in re.findall(r"[^\W_]+", text.lower()):
+            if word not in self.STOP:
+                vector[zlib.crc32(word.encode()) % self.dim] += 1.0
+        norm = math.sqrt(sum(x * x for x in vector)) or 1.0
+        return [x / norm for x in vector]
+
+    def embed_query(self, text):
+        self.queries.append(text)
+        return self._vector(text)
+
+    def embed_documents(self, texts):
+        return [self._vector(t) for t in texts]

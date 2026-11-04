@@ -11,6 +11,9 @@ CREDENTIALS_FILE_VAR = "GOOGLE_CREDENTIALS_FILE"
 TOKEN_FILE_VAR = "GOOGLE_TOKEN_FILE"
 OUTBOX_FILE_VAR = "ACADEMY_OUTBOX_FILE"
 USE_MCP_VAR = "USE_MCP"
+# FAQ search: which local embedding model turns text into vectors ("provider and model names come from env vars").
+EMBEDDING_MODEL_VAR = "EMBEDDING_MODEL"
+EMBEDDING_CACHE_VAR = "FASTEMBED_CACHE_PATH"  # optional: where the downloaded model is kept
 
 DEFAULT_CREDENTIALS_FILE = ".secrets/academy_google_credentials.json"
 DEFAULT_TOKEN_FILE = ".secrets/academy_google_token.json"

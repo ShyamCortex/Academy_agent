@@ -1,0 +1,15 @@
+{"id": "rq-01", "lang": "en", "question": "Do I have to pay anything for the trial class?", "expected_chunks": ["demo-free", "demo-free-tenglish"]}
+{"id": "rq-02", "lang": "en", "question": "How many minutes does one trial session last?", "expected_chunks": ["demo-length", "demo-free"]}
+{"id": "rq-03", "lang": "en", "question": "Which weekdays can my son come for a demo?", "expected_chunks": ["demo-days-times"]}
+{"id": "rq-04", "lang": "en", "question": "I want to enrol my daughter for a trial. What should I send you?", "expected_chunks": ["demo-what-we-need", "demo-how-to-book"]}
+{"id": "rq-05", "lang": "en", "question": "What is the price per month?", "expected_chunks": ["fees-plans", "fees-plans-tenglish"]}
+{"id": "rq-06", "lang": "en", "question": "How many sessions do I get in the smaller plan?", "expected_chunks": ["fees-classes-per-plan", "fees-plans"]}
+{"id": "rq-07", "lang": "en", "question": "Is there any concession for siblings?", "expected_chunks": ["fees-discounts"]}
+{"id": "rq-08", "lang": "en", "question": "Can I pay by UPI or do I need cash?", "expected_chunks": ["fees-payment"]}
+{"id": "rq-09", "lang": "en", "question": "What time does the Saturday class run?", "expected_chunks": ["batches-list", "batches-weekend", "batches-tenglish"]}
+{"id": "rq-10", "lang": "en", "question": "Is the class meant for beginners or for advanced players?", "expected_chunks": ["batches-level", "batches-list"]}
+{"id": "rq-11", "lang": "en", "question": "Are there still places left in the batch?", "expected_chunks": ["batches-seats"]}
+{"id": "rq-12", "lang": "en", "question": "When is the next tournament and what does it cost to enter?", "expected_chunks": ["tournament-next", "workshop-tournament-tenglish"]}
+{"id": "rq-13", "lang": "en", "question": "I need to move my demo to another day.", "expected_chunks": ["demo-reschedule"]}
+{"id": "rq-14", "lang": "en", "question": "My child was bullied in class. Who do I talk to?", "expected_chunks": ["complaints"]}
+{"id": "rq-15", "lang": "tenglish", "question": "Weekend ki workshop undha? Fee entha?", "expected_chunks": ["workshop-next", "workshop-tournament-tenglish"]}

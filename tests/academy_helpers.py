@@ -11,9 +11,10 @@ from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
 
 from email_assistant.academy import config
+from email_assistant.academy.faq import load_faq
 from email_assistant.academy.graph import build_graph
 from email_assistant.academy.schemas import RouterSchema
-from fakes import ScriptedModel
+from fakes import HashingEmbedder, ScriptedModel
 
 # The clock every unit test sees (a Wednesday, 10:00 India time). Slots before this are in the past.
 NOW = datetime(2026, 11, 4, 10, 0, tzinfo=config.TIMEZONE)
@@ -42,10 +43,24 @@ class SeedServer:
         }
         self.requests: list[httpx.Request] = []
         self.transport = httpx.MockTransport(self._handle)
+        embedder = HashingEmbedder()
+        self.faq = [(c, embedder.embed_documents([c.text])[0]) for c in load_faq()]  # the pretend faq_chunks table
+
+    def _match_faq(self, params) -> httpx.Response:
+        """What the SQL function match_faq does: nearest chunks by cosine similarity, at most 5."""
+        query = json.loads(params["query_embedding"])
+        count = max(1, min(int(params.get("match_count", 3)), 5))
+        scored = sorted(((sum(a * b for a, b in zip(query, vec)), c) for c, vec in self.faq), key=lambda pair: -pair[0])
+        return httpx.Response(200, json=[
+            {"id": c.id, "lang": c.lang, "topic": c.topic, "question": c.question, "answer": c.answer, "similarity": sim}
+            for sim, c in scored[:count]
+        ])
 
     def _handle(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         table = request.url.path.rsplit("/", 1)[-1]
+        if request.url.path.endswith("/rpc/match_faq"):
+            return self._match_faq(request.url.params)
         if table not in self.tables:
             return httpx.Response(404, json={"message": "no such table"})
         rows = self.tables[table]

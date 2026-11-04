@@ -106,9 +106,9 @@ def test_the_transport_blocks_every_write_even_through_the_inner_client(method):
         getattr(client._http, method)("plans")  # someone reaching past `select`: still blocked
 
 
-def test_the_client_has_no_public_method_except_select():
+def test_the_client_has_no_public_method_except_the_two_reads():
     public = [n for n in dir(ReadOnlyRest) if not n.startswith("_")]
-    assert sorted(public) == ["from_env", "select"]
+    assert sorted(public) == ["from_env", "match_faq", "select"]
 
 
 def test_only_known_tables_can_be_read():

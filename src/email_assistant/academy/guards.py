@@ -15,6 +15,7 @@ READ_ONLY_TOOLS = frozenset({
     "get_batch_timings",
     "get_workshops",
     "get_tournaments",
+    "search_knowledge",
 })
 
 # The only write tool whose edits teach the agent wording (response_preferences memory).

@@ -31,6 +31,7 @@ from email_assistant.academy.guards import READ_ONLY_TOOLS
 SERVER_ENV_VARS = (
     settings.SUPABASE_URL_VAR, settings.SUPABASE_ANON_KEY_VAR,
     settings.CALENDAR_ID_VAR, settings.CREDENTIALS_FILE_VAR, settings.TOKEN_FILE_VAR,
+    settings.EMBEDDING_MODEL_VAR, settings.EMBEDDING_CACHE_VAR,  # FAQ search embeds the question inside the server
 )
 
 
