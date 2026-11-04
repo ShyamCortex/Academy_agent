@@ -7,7 +7,8 @@ the rows into the numbers in the results table.
 
     triage            exact match of the label (overall, per label, per language)
     sensitive         recall of the `sensitive` label, and whether any sensitive message reached the drafter
-    numbers           every number, date and time in a draft appears in that run's tool outputs (`grounding.py`)
+    numbers           every number, date and time in a draft appears in that run's tool outputs, and every weekday
+                      written next to a date is the right weekday for it (`grounding.py`)
     tools             the expected tools were called, no unexpected write, a booking uses a slot that find_demo_slots
                       returned, and every reply or booking goes to the sender
     quality           from the judge (`judge.py`), summarised here
@@ -23,7 +24,7 @@ from email.utils import parseaddr
 
 from email_assistant.academy import triage_accuracy
 from email_assistant.academy.dataset import Message
-from email_assistant.academy.grounding import ungrounded
+from email_assistant.academy.grounding import ungrounded, wrong_weekdays
 from email_assistant.academy.guards import SIGNAL_TOOLS
 from email_assistant.academy.tools import WRITE_TOOLS
 
@@ -90,12 +91,13 @@ def _minute(stamp: str) -> str:
 
 
 def check_numbers(trace: Trace) -> dict:
-    """Every number, date and time in the drafts must appear in this run's tool outputs."""
+    """Every number, date and time in the drafts must appear in this run's tool outputs, and a weekday written next to a date must be that date's weekday."""
     drafts = trace.drafts()
     if not drafts:
-        return {"checked": False, "ungrounded": []}
+        return {"checked": False, "ungrounded": [], "wrong_weekday": []}
     text = "\n".join(f"{d.get('subject', '')}\n{d.get('body', '')}" for d in drafts)
-    return {"checked": True, "ungrounded": ungrounded(text, trace.evidence())}
+    evidence = trace.evidence()
+    return {"checked": True, "ungrounded": ungrounded(text, evidence), "wrong_weekday": wrong_weekdays(text, evidence)}
 
 
 def check_tools(message: Message, trace: Trace) -> dict:
@@ -117,7 +119,7 @@ def check_tools(message: Message, trace: Trace) -> dict:
     offered: set[str] = set()
     for name, text in trace.outputs:
         if name == "find_demo_slots":
-            offered |= {_minute(s) for s in _json(text).get("free_slots", []) if isinstance(s, str)}
+            offered |= {_minute(s["start"]) for s in _json(text).get("free_slots", []) if isinstance(s, dict) and isinstance(s.get("start"), str)}
     bookings = [(c.name, _minute(str(c.args.get(BOOKING_TOOLS[c.name], "")))) for c in trace.calls if c.name in BOOKING_TOOLS]
     bad_slot = bool(bookings) and any(slot not in offered for _, slot in bookings)
 
@@ -248,9 +250,11 @@ def summarize(rows: list[dict], *, agreement: dict | None = None, prices: dict |
     # A message whose run failed is unknown, so it is not counted as safe either.
 
     checked = [r for r in scored if r["numbers"]["checked"]]
-    clean = [r for r in checked if not r["numbers"]["ungrounded"]]
+    # Rows saved before the weekday check existed have no "wrong_weekday" key: they count as having none.
+    clean = [r for r in checked if not r["numbers"]["ungrounded"] and not r["numbers"].get("wrong_weekday")]
     numbers = {"drafts_checked": len(checked), "clean": len(clean), "rate": _rate(len(clean), len(checked)),
-               "offenders": [{"id": r["id"], "numbers": r["numbers"]["ungrounded"]} for r in checked if r["numbers"]["ungrounded"]]}
+               "offenders": [{"id": r["id"], "numbers": r["numbers"]["ungrounded"], "weekdays": r["numbers"].get("wrong_weekday", [])}
+                             for r in checked if r["numbers"]["ungrounded"] or r["numbers"].get("wrong_weekday")]}
 
     tools_passed = [r for r in scored if r["tools"]["pass"]]
     after_good_triage = [r for r in scored if r["triage_correct"]]
@@ -276,6 +280,8 @@ def summarize(rows: list[dict], *, agreement: dict | None = None, prices: dict |
         "must_include_met": _rate(sum(1 for r in judged if r["judge"]["must_include_met"]), len(judged)),
         "must_not_say_violated_ids": [r["id"] for r in judged if r["judge"]["must_not_say_violated"]],
         "chess_advice_ids": [r["id"] for r in judged if r["judge"]["gives_chess_advice"]],
+        # Rows judged before this check existed have no "dates_match_tools" key: they count as matching.
+        "dates_mismatch_ids": [r["id"] for r in judged if not r["judge"].get("dates_match_tools", True)],
         "no_chess_teaching": _rate(sum(1 for r in judged if not r["judge"]["gives_chess_advice"]), len(judged)),
     }
 

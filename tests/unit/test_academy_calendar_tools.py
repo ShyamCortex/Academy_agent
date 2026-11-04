@@ -19,8 +19,13 @@ def at(day: str, hhmm: str) -> datetime:
     return dates.parse_local_datetime(f"{day}T{hhmm}")
 
 
-def slots(world, date_from="2026-11-04", date_to="2026-11-09") -> list[str]:
-    return json.loads(find_demo_slots.invoke({"date_from": date_from, "date_to": date_to}))["free_slots"]
+def search(date_from="2026-11-04", date_to="2026-11-09", **more) -> dict:
+    return json.loads(find_demo_slots.invoke({"date_from": date_from, "date_to": date_to, **more}))
+
+
+def slots(world, date_from="2026-11-04", date_to="2026-11-09", **more) -> list[str]:
+    """The start of every free slot, like '2026-11-07T10:00'."""
+    return [s["start"] for s in search(date_from, date_to, **more)["free_slots"]]
 
 
 def book(day="2026-11-07", start="10:00", end="10:45", email=PARENT, child="Arjun") -> dict:
@@ -31,7 +36,7 @@ def book(day="2026-11-07", start="10:00", end="10:45", email=PARENT, child="Arju
 # ---- find_demo_slots -----------------------------------------------------------------------------
 
 def test_slots_follow_the_academy_hours_on_an_empty_calendar(academy_world):
-    assert slots(academy_world) == [
+    assert slots(academy_world, date_to="2026-11-09")[:5] == [
         "2026-11-04T17:00",                       # Wednesday (it is 10:00 now, so 17:00 is still ahead)
         "2026-11-07T10:00", "2026-11-07T11:30",   # Saturday
         "2026-11-09T17:00", "2026-11-09T18:00",   # Monday
@@ -90,6 +95,117 @@ def test_a_calendar_error_comes_back_as_an_error_result(academy_world):
     with use_calendar(Broken()):
         result = json.loads(find_demo_slots.invoke({"date_from": "2026-11-04", "date_to": "2026-11-09"}))
     assert result["error"] == "Google Calendar answered with HTTP 503." and "free_slots" not in result
+
+
+# ---- find_demo_slots: labels, look-ahead, weekday filter (v1 eval: the model wrote weekdays and dates itself, wrongly) ----
+
+WEEKDAYS_NEEDED = sorted(config.DEMO_SLOT_TIMES)
+
+
+def test_every_slot_has_a_label_with_its_weekday_date_and_24_hour_time(academy_world):
+    result = search("2026-11-04", "2026-11-09")
+    by_start = {s["start"]: s for s in result["free_slots"]}
+    assert by_start["2026-11-09T18:00"] == {"label": "Monday 2026-11-09 18:00 IST", "start": "2026-11-09T18:00", "end": "2026-11-09T18:45"}
+    assert by_start["2026-11-07T10:00"]["label"] == "Saturday 2026-11-07 10:00 IST"
+    for slot in result["free_slots"]:   # the label always agrees with the real calendar
+        start = at(*slot["start"].split("T"))
+        assert slot["label"] == f"{start:%A %Y-%m-%d %H:%M} IST"
+        assert slot["end"] == dates.iso_minutes(start + timedelta(minutes=config.DEMO_CLASS_MINUTES))
+
+
+def test_the_answer_carries_the_demo_length_and_fee_from_config(academy_world):
+    result = search()
+    assert (result["demo_minutes"], result["demo_fee_rupees"]) == (config.DEMO_CLASS_MINUTES, config.DEMO_CLASS_FEE_RUPEES)
+    assert result["demo_terms"] == "free, 45 minutes"
+    assert result["demo_days"] == ["Monday", "Wednesday", "Saturday"]
+
+
+def test_a_paid_demo_is_described_with_its_fee(academy_world, monkeypatch):
+    monkeypatch.setattr(config, "DEMO_CLASS_FEE_RUPEES", 300)
+    assert search()["demo_terms"] == "₹300, 45 minutes"
+
+
+def test_a_one_day_search_still_covers_the_next_three_of_every_demo_weekday(academy_world):
+    result = search("2026-11-04", "2026-11-04")
+    days = {}
+    for slot in result["free_slots"]:
+        days.setdefault(slot["label"].split()[0], set()).add(slot["start"][:10])
+    assert {name: sorted(found) for name, found in days.items()} == {
+        "Wednesday": ["2026-11-04", "2026-11-11", "2026-11-18"],
+        "Saturday": ["2026-11-07", "2026-11-14", "2026-11-21"],
+        "Monday": ["2026-11-09", "2026-11-16", "2026-11-23"],
+    }
+    assert result["checked_to"] == "2026-11-23"
+
+
+def test_the_lookahead_does_not_count_a_day_whose_slots_have_all_passed(academy_world, monkeypatch):
+    monkeypatch.setattr(dates, "now_ist", lambda: at("2026-11-04", "17:30"))   # today's only Wednesday slot (17:00) is over
+    result = search("2026-11-04", "2026-11-04")
+    wednesdays = sorted({s["start"][:10] for s in result["free_slots"] if s["label"].startswith("Wednesday")})
+    assert wednesdays == ["2026-11-11", "2026-11-18", "2026-11-25"]
+
+
+def test_a_search_the_model_makes_longer_than_the_lookahead_is_kept(academy_world):
+    assert search("2026-11-04", "2026-12-02")["checked_to"] == "2026-12-02"
+
+
+def test_the_lookahead_starts_from_the_requested_date(academy_world):
+    result = search("2026-12-01", "2026-12-01")      # a Tuesday
+    firsts = {}
+    for slot in result["free_slots"]:
+        firsts.setdefault(slot["label"].split()[0], slot["start"][:10])
+    assert firsts == {"Wednesday": "2026-12-02", "Saturday": "2026-12-05", "Monday": "2026-12-07"}
+
+
+def test_a_date_in_the_past_is_searched_from_today(academy_world):
+    result = search("2026-10-01", "2026-10-05")
+    assert result["checked_from"] == "2026-11-04" and result["free_slots"]
+
+
+def test_the_weekday_filter_keeps_only_that_day_and_still_covers_three_of_them(academy_world):
+    result = search("2026-11-04", "2026-11-04", weekday="Monday")
+    assert [s["label"] for s in result["free_slots"]] == [
+        "Monday 2026-11-09 17:00 IST", "Monday 2026-11-09 18:00 IST", "Monday 2026-11-16 17:00 IST",
+        "Monday 2026-11-16 18:00 IST", "Monday 2026-11-23 17:00 IST", "Monday 2026-11-23 18:00 IST"]
+    assert result["weekday"] == "Monday" and result["checked_to"] == "2026-11-23"
+
+
+@pytest.mark.parametrize("written", ["monday", "MONDAY", " Mon ", "mon.", "Monday "])
+def test_the_weekday_filter_accepts_common_spellings(academy_world, written):
+    assert {s["start"][:10] for s in search(weekday=written)["free_slots"]} == {"2026-11-09", "2026-11-16", "2026-11-23"}
+
+
+def test_an_empty_weekday_means_all_days(academy_world):
+    assert slots(academy_world, weekday="") == slots(academy_world)
+
+
+def test_a_weekday_with_no_demo_gives_no_slots_and_says_which_days_have_them(academy_world):
+    result = search(weekday="Tuesday")
+    assert result["free_slots"] == [] and "No demo classes are held on Tuesday" in result["note"] and "error" not in result
+    assert "Monday, Wednesday, Saturday" in result["note"]
+
+
+@pytest.mark.parametrize("bad", ["someday", "Mo", "7", "next"])
+def test_a_weekday_that_is_not_a_weekday_is_an_error(academy_world, bad):
+    result = search(weekday=bad)
+    assert "weekday" in result["error"] and "free_slots" not in result
+
+
+def test_busy_slots_are_left_out_of_the_extended_window_too(academy_world):
+    academy_world.calendar._fixed = [Block(at("2026-11-16", "17:00"), at("2026-11-16", "17:45"))]
+    labels = [s["label"] for s in search(weekday="Monday")["free_slots"]]
+    assert "Monday 2026-11-16 17:00 IST" not in labels and "Monday 2026-11-16 18:00 IST" in labels
+
+
+def test_the_label_is_the_only_place_a_weekday_is_written_and_start_and_end_are_what_booking_takes(academy_world):
+    """The model copies label for the parent and start/end for the booking; neither needs date arithmetic."""
+    slot = next(s for s in search(weekday="Monday")["free_slots"] if s["label"].endswith("18:00 IST"))
+    result = json.loads(create_demo_event.invoke({"parent_email": PARENT, "child_first_name": "Arjun", "start": slot["start"], "end": slot["end"]}))
+    assert result["booked"] is True and result["start"] == "2026-11-09T18:00"
+
+
+def test_the_parameter_list_of_find_demo_slots_gained_only_an_optional_weekday():
+    assert find_demo_slots.args["weekday"]["default"] == "" and find_demo_slots.args_schema.model_json_schema()["required"] == ["date_from", "date_to"]
 
 
 # ---- create_demo_event ---------------------------------------------------------------------------
@@ -182,7 +298,7 @@ def test_every_slot_find_demo_slots_offers_can_be_booked_and_then_stops_being_of
 
 
 def test_the_tool_text_tells_the_model_to_use_a_returned_slot():
-    assert "free_slots from find_demo_slots" in create_demo_event.description
+    assert "free_slots of find_demo_slots" in create_demo_event.description
 
 
 def test_a_child_with_a_demo_already_booked_is_sent_to_reschedule(academy_world):
@@ -251,7 +367,7 @@ def test_every_slot_find_demo_slots_offers_is_a_valid_reschedule_target(academy_
 
 
 def test_the_reschedule_tool_text_tells_the_model_to_use_a_returned_slot():
-    assert "free_slots from find_demo_slots" in reschedule_demo.description
+    assert "free_slots of find_demo_slots" in reschedule_demo.description
 
 
 def test_rescheduling_into_someone_elses_time_is_refused(academy_world):

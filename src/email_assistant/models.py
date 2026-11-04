@@ -65,6 +65,9 @@ RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 RETRYABLE_ERROR_NAMES = {
     "APIConnectionError", "APITimeoutError", "ConnectError", "ConnectTimeout", "ReadTimeout", "RemoteProtocolError",
 }
+# Provider error codes that mean "the model's own output was unusable" (Groq answers 400 with these). Waiting does not
+# fix them and their text can quote the model's output, so they are never retried by waiting; the model is reminded instead.
+MODEL_MISTAKE_CODES = ("tool_use_failed", "output_parse_failed")
 # Phrases that appear in rate-limit messages when the status code is hidden inside text.
 RETRYABLE_TEXT = (
     "resource_exhausted", "rate limit", "rate_limit", "too many requests", "429 ", "503 ", "unavailable", "overloaded",
@@ -82,12 +85,18 @@ def _status_code(exc: BaseException) -> Optional[int]:
     return value if isinstance(value, int) else None
 
 
+def _is_model_mistake(exc: BaseException) -> bool:
+    """True for a provider error that says the model's output was unusable (`tool_use_failed`, `output_parse_failed`)."""
+    text = str(exc).lower()
+    return any(code in text for code in MODEL_MISTAKE_CODES) or error_code(exc) in MODEL_MISTAKE_CODES
+
+
 def is_retryable(exc: BaseException) -> bool:
     """True if waiting and trying again could help (rate limit, server error, network)."""
     seen: set[int] = set()
     while exc is not None and id(exc) not in seen:  # also look at the error that caused this one
         seen.add(id(exc))
-        if "tool_use_failed" in str(exc).lower():  # the model's own mistake: waiting will not fix it
+        if _is_model_mistake(exc):  # the model's own mistake: waiting will not fix it
             return False
         if _status_code(exc) in RETRYABLE_STATUS_CODES:
             return True
@@ -151,6 +160,10 @@ NUDGE_NO_TOOL = (
     "You must reply by calling one of the available tools, not with plain text. "
     "If the task is complete, call the Done tool."
 )
+NUDGE_UNREADABLE = (
+    "Your last answer could not be read. Answer again by calling one of the available tools once, with arguments "
+    "that are valid JSON and match the tool's schema. Dates and times are plain strings."
+)
 NUDGE_BAD_ARGS = (
     "Your last tool call did not match the tool's argument schema. Call the tool again with valid "
     "arguments. Dates and times are plain strings in the format the tool describes."
@@ -164,19 +177,21 @@ class NoToolCallError(RuntimeError):
 def tool_call_nudge(exc: BaseException) -> Optional[str]:
     """If `exc` is a tool-calling mistake the model can fix, return a short reminder for it.
 
-    Two mistakes are known:
+    Three mistakes are known:
     - "Tool choice is required, but model did not call a tool": a forced tool call, but the
       model wrote a closing sentence instead (usually because the work was already done).
     - "tool call validation failed ... did not match schema": the model sent an argument in
       the wrong shape. Groq checks arguments strictly, e.g. a `datetime` needs seconds and a
       time zone.
+    - 400 `output_parse_failed`: the provider could not read the model's output at all. It fails before any
+      tool runs, so asking again cannot repeat an action. The model is asked at most MAX_NUDGES times, like the others.
     The reminder never repeats the model's output or the tool arguments (they may hold personal data).
     """
     if isinstance(exc, NoToolCallError):
         return NUDGE_NO_TOOL
     text = str(exc).lower()
     if "tool_use_failed" not in text:
-        return None
+        return NUDGE_UNREADABLE if _is_model_mistake(exc) else None
     if "did not call a tool" in text:
         return NUDGE_NO_TOOL
     if "validation failed" in text or "did not match schema" in text:
@@ -211,7 +226,7 @@ def structured_answer_nudge(schema_name: str) -> Callable[[BaseException], Optio
     def nudge(exc: BaseException) -> Optional[str]:
         if isinstance(exc, (NoStructuredAnswerError, ValidationError, OutputParserException)):
             return reminder
-        return reminder if "tool_use_failed" in str(exc).lower() else None
+        return reminder if _is_model_mistake(exc) else None
 
     return nudge
 

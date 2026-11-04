@@ -490,3 +490,18 @@ Deprecation seen at runtime: `StateGraph(State, input=StateInput)` →
 | `Literal[1, 2, 3, 4, 5]` | Becomes `{"enum": [1,2,3,4,5], "type": "integer"}` in the tool schema. Groq checks tool arguments strictly against it. Now a plain `integer`; the range is checked by a pydantic validator, and a refused value is re-asked. |
 | Tests that run with no keys | 609 in `tests/unit/` (was 571), with MCP off and on. |
 
+
+---
+
+## 17. Addendum from the first full dev eval (v1) and its fixes (2026-11-04)
+
+Source: `docs/agent/results/eval_dev-final-20261104.*` (30 dev messages; the owner read every reply). Details and fixes: `PLAN.md`, "Eval v2 fixes".
+
+| Item | Finding |
+|---|---|
+| Weekdays and dates | The model wrote weekdays and dates itself and got them wrong (a Saturday called "Tuesday", a Monday called "Wednesday"). Cause: `find_demo_slots` returned bare ISO strings, so the model had to work out the weekday, and a short search window hid slots that did exist, so it said a free slot was "not available" and booked nothing. The number check did not look at weekday names, so it could not see this. |
+| Equivalent formats | The number check already read `5 pm` = `17:00` and `7 Nov` = `2026-11-07`. It did not read `Saturday 7th`, `the 7th` or `7, 14 and 21 November`: in v1 that last form made `7, 14, 21` show up as three separate invented numbers. All three forms are read now. Numbers and times the tools never returned still fail in every format. |
+| `output_parse_failed` | Groq answered 400 with this code once in the dev run. `is_retryable` could have waited on it if the model's own output contained words like "unavailable"; only `tool_use_failed` was shielded. Both codes are now one list, `MODEL_MISTAKE_CODES`. The code is raised before any tool runs, so asking again cannot repeat a booking or a reply. |
+| Judge blind spots | The judge was not given the sender's display name (so it called the parent's own name invented) and had no instruction to check weekdays against the tool results (it gave 3/5 to a reply with a wrong weekday). |
+| Limit that remains | `wrong_weekdays` looks only at a weekday written right next to a date. "Monday demo slots on 2026-11-07" (weekday and date in one sentence but not adjacent) is not caught by code; the judge's `dates_match_tools` is the second line for it. |
+| Tests that run with no keys | 714 in `tests/unit/` (was 609), with MCP off and on. |

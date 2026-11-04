@@ -32,7 +32,7 @@ def write(path, rows):
 
 
 def good_grade(quality=5, chess=False):
-    return JudgeGrade(reasoning="fine", quality=quality, must_include_met=True, must_not_say_violated=False, gives_chess_advice=chess)
+    return JudgeGrade(reasoning="fine", dates_match_tools=True, quality=quality, must_include_met=True, must_not_say_violated=False, gives_chess_advice=chess)
 
 
 def drafting(n=1):
@@ -442,3 +442,25 @@ def test_an_agent_failure_saves_the_groq_code_in_the_row(env):
     assert (row["status"], row["error"], row["error_code"]) == ("error", "BadRequestError", "model_decommissioned")
     assert SECRET_TEXT not in json.dumps(row)
 
+
+
+# ---- weekday and date checks reach the results -----------------------------------------------------
+
+def test_a_judge_that_says_the_dates_are_wrong_is_in_the_row_and_the_table(env):
+    bad = JudgeGrade(reasoning="fine", dates_match_tools=False, quality=2, must_include_met=True, must_not_say_violated=False, gives_chess_advice=False)
+    code, output, out = cli(env, write(env / "d.jsonl", [row_for("d1", "book_demo", BOOK)]), triage_script=["book_demo"], agent_script=drafting(), judge_script=[bad])
+    assert latest(out)["d1"]["judge"]["dates_match_tools"] is False
+    summary = json.loads((out / "eval_dev-20261104.json").read_text(encoding="utf-8"))["summary"]
+    assert summary["quality"]["dates_mismatch_ids"] == ["d1"]
+    assert "does not match the tool results: ['d1']" in (out / "eval_dev-20261104.md").read_text(encoding="utf-8")
+
+
+def test_a_reply_with_a_wrong_weekday_fails_the_numbers_bar_and_the_table_says_why(env):
+    wrong = [tool_call_message("find_demo_slots", date_from="2026-11-04", date_to="2026-11-10"),
+             tool_call_message("send_reply", to="parent@example.invalid", subject="Demo", body="Tuesday, 7 Nov at 10:00 is free."),
+             tool_call_message("Done", done=True)]
+    code, output, out = cli(env, write(env / "d.jsonl", [row_for("d1", "book_demo", BOOK)]), triage_script=["book_demo"], agent_script=wrong, judge_script=[good_grade()])
+    row = latest(out)["d1"]
+    assert row["numbers"] == {"checked": True, "ungrounded": [], "wrong_weekday": ["Tuesday, 7 Nov"]}
+    table = (out / "eval_dev-20261104.md").read_text(encoding="utf-8")
+    assert "weekday does not match its date: Tuesday, 7 Nov" in table and "FAIL" in table

@@ -37,14 +37,14 @@ def academy_tools() -> list:
 
 
 TOOLS_PROMPT = """
-1. find_demo_slots(date_from, date_to) - free demo-class slots between two dates (YYYY-MM-DD). Read-only.
+1. find_demo_slots(date_from, date_to, weekday) - free demo-class slots from date_from (YYYY-MM-DD). Every slot comes with a label that has its weekday, date and 24 h time, such as "<Weekday> <YYYY-MM-DD> <HH:MM> IST", plus the exact start and end to book with. It always covers at least the next 3 occurrences of every demo day, and it returns the demo length and fee in demo_terms. weekday is optional, for example "Monday", and keeps only that day. Read-only.
 2. get_plans() - the fee plans: classes per month and monthly fee. Read-only.
 3. get_batch_timings() - the regular batches: days, time, level, seats left. Read-only.
 4. get_workshops() - upcoming workshops: date, fee, seats left. Read-only.
 5. get_tournaments() - upcoming tournaments: date, entry fee, seats left. Read-only.
 6. search_knowledge(question) - search the academy FAQ (how to book, payment, discounts, complaints, what the assistant can do). Returns the 3 closest FAQ answers with a similarity score. Read-only. For live fees, seats and dates use tools 2-5; if they differ from an FAQ answer, the live tool is right. If no FAQ answer fits, ask the owner with Question. Do not make up an answer.
-7. create_demo_event(parent_email, child_first_name, start, end) - book a demo class. start must be one of the free_slots from find_demo_slots; end is start plus the demo length. Both are strings like 2026-11-07T10:00. Any other start is rejected. The owner approves first.
-8. reschedule_demo(parent_email, child_first_name, new_start, new_end) - move a booked demo class. The owner approves first.
+7. create_demo_event(parent_email, child_first_name, start, end) - book a demo class. Use the start and end of one free slot from find_demo_slots, copied exactly (strings like 2026-11-07T10:00). Any other start is rejected. The owner approves first.
+8. reschedule_demo(parent_email, child_first_name, new_start, new_end) - move a booked demo class. Use the start and end of one free slot from find_demo_slots as new_start and new_end. The owner approves first.
 9. cancel_demo(parent_email, child_first_name) - cancel a booked demo class. The owner approves first.
 10. send_reply(to, subject, body) - reply to the parent. to is the parent's email address. The owner approves first.
 11. Question(content) - ask the owner when you are missing information a tool cannot give.
