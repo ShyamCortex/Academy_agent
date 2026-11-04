@@ -108,7 +108,7 @@ This repo is being turned into the **Academy Support Agent** for EduChess (Champ
 
 ### Models
 
-- Free tiers only, no paid keys. Gemini Flash-Lite for triage; Gemini Flash for drafting and tool use (Google AI Studio key). The eval judge is an open model on Groq's free tier (different model family from the drafter).
+- Free tiers only, no paid keys. Triage: groq:openai/gpt-oss-20b · Agent: groq:openai/gpt-oss-120b · Judge: groq:qwen/qwen3.8-27b (different family from the agent)..
 - Provider and model names come from env vars, never hard-coded. Check current model names in the official docs, don't guess.
 - Every model call needs retry with exponential backoff (free tiers rate-limit).
 - Tracing stays on LangSmith.

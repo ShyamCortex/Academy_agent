@@ -1,0 +1,55 @@
+{
+  "date": "2026-11-04T13:22:58+05:30",
+  "dataset": "data/eval/sample_messages.jsonl",
+  "triage_model": "groq:openai/gpt-oss-20b",
+  "summary": {
+    "total": 3,
+    "correct": 3,
+    "accuracy": 1.0,
+    "errors": 0,
+    "per_label": {
+      "book_demo": {
+        "n": 1,
+        "correct": 1,
+        "accuracy": 1.0
+      },
+      "fees_plans": {
+        "n": 1,
+        "correct": 1,
+        "accuracy": 1.0
+      },
+      "sensitive": {
+        "n": 1,
+        "correct": 1,
+        "accuracy": 1.0
+      }
+    },
+    "confusions": []
+  },
+  "outcomes": [
+    {
+      "id": "SAMPLE-01",
+      "language": "en",
+      "expected": "book_demo",
+      "predicted": "book_demo",
+      "correct": true,
+      "error": null
+    },
+    {
+      "id": "SAMPLE-02",
+      "language": "tenglish",
+      "expected": "fees_plans",
+      "predicted": "fees_plans",
+      "correct": true,
+      "error": null
+    },
+    {
+      "id": "SAMPLE-03",
+      "language": "en",
+      "expected": "sensitive",
+      "predicted": "sensitive",
+      "correct": true,
+      "error": null
+    }
+  ]
+}
