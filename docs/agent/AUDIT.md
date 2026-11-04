@@ -464,3 +464,17 @@ Deprecation seen at runtime: `StateGraph(State, input=StateInput)` →
 | Supabase keys | Two key styles exist: legacy JWT keys (the middle part holds `"role"`) and `sb_publishable_` / `sb_secret_` keys. The client accepts only `role == anon` or `sb_publishable_`. |
 | Tests that run with no keys | 324 in `tests/unit/` (was 156), with MCP off and on. |
 | Lock | `mcp` pinned to 2.3.0 and `httpx` made explicit; `sse-starlette` moved from 2.1.3 to 3.6.0 as a dependency of `mcp`. `langgraph dev` still starts. |
+
+---
+
+## 15. Addendum from Phase 3 + 5 (2026-11-04)
+
+| Item | Finding |
+|---|---|
+| Embedding hosts | The cloud sandbox cannot reach Hugging Face or the fastembed model bucket (HTTP 403), so no real embedding ran here. `fastembed` 0.9.1 itself installs and lists its models. `BAAI/bge-small-en-v1.5` (384 numbers, 0.067 GB) is on that list. |
+| Windows | `uv.lock` holds `onnxruntime` 1.31.1 wheels for `cp313` `win_amd64`. Adding `fastembed` also moved `click` 8.2.1 to 8.5.0. |
+| Read-only client | The existing source scan treats `.rpc` as a write call. `match_faq` is a fixed-name method instead, and the GET-only transport still refuses everything else. The scan test for "public methods" now expects `from_env`, `match_faq`, `select`. |
+| `match_faq` over GET | PostgREST allows GET for `stable`/`immutable` functions. **UNKNOWN until run on the laptop:** the vector travels as a 384-number text in the query string (about 3.5 KB). |
+| Eval harness | The parent graph's final state holds all messages of the drafting subgraph, so one state read gives the tool calls and tool results. A LangChain callback sees each model call; the role (triage, agent, judge) is read from the wrapper names in `models.py`. |
+| Calendar tool gap found while writing the tool-call scorer | `create_demo_event` accepts any free time, even outside the academy's demo hours; the prompt, not the tool, says to use a slot from `find_demo_slots`. The eval now checks it in code. The tool itself is unchanged (candidate fix for a later phase). |
+| Tests that run with no keys | 525 in `tests/unit/` (was 324), with MCP off and on. |

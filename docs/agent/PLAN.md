@@ -21,6 +21,9 @@ Everything else is in [Later](#later-not-in-the-22-nov-core).
 | 10 | Test Supabase project and Google test calendar ready by **8 Nov**. | Shyam |
 | 11 | **Phase 2 and Phase 4 are built together** on one branch, to be code-complete in one day. | Shyam |
 | 12 | Read-tool names are now `get_plans`, `get_batch_timings`, `get_workshops`, `get_tournaments` (replacing the Phase 1 mock names `get_fee_plans`, `get_batches`, `get_upcoming_events`). The allow-list holds only the five read-only tools. | Shyam |
+| 13 | **Phase 3 and Phase 5 are built together** on one branch. The build session wrote the FAQ (25 English + 5 Tenglish Q&As, facts only from `config.py`); you can replace it. | Shyam |
+| 14 | The FAQ search tool is `search_knowledge` (not `search_faq`). The allow-list now holds six read-only tools. | Shyam |
+| 15 | Held-out set is run only with `--heldout`, once; a second run needs `--force`. Dev and held-out messages live in two files (`dev_messages.jsonl`, `heldout_messages.jsonl`). | Shyam |
 
 ## Status
 
@@ -28,10 +31,10 @@ Everything else is in [Later](#later-not-in-the-22-nov-core).
 |---|---|---|---|---|---|---|
 | 1a | Run on Gemini + Groq via env vars | `phase/1a-models` | 3 | API keys in `.env` | 3–5 Nov | **Done, merged** (PR #3). Laptop: `--ping` all PASS; upstream real tests 11/16 (see [Phase 1a results](#phase-1a-results-from-the-laptop)) |
 | 1 | Retarget: 7 labels, prompts, sensitive route, data format | `claude/phase-1a-test-failures-5bplly` (name set by the cloud session) | 5 | — | 6–8 Nov | **Done, merged** (PR #4). Laptop triage run: 3/3 on the 3 samples (`docs/agent/results/triage_accuracy_20261104_132258.json`). |
-| 2 | Real tools + approval + sensitive block in code | `claude/kind-bell-u63k9h` (name set by the cloud session; built together with Phase 4) | 8 | Test Supabase project + SQL files, Google test calendar + OAuth | 9–14 Nov | **Code done in the cloud, 324 no-key tests pass (also with `USE_MCP=1`); PR open; laptop steps pending** ([`LAPTOP_SETUP.md`](LAPTOP_SETUP.md)) |
-| 5 | Safety evals (core subset) | `phase/5-evals` | 5 | The 40 messages (dev 30 by 13 Nov) | 15–17 Nov | Not started |
-| 4 | Small MCP server (read-only) | same branch as Phase 2 | 2 | — | 18 Nov | **Code done in the cloud, same PR as Phase 2; laptop check pending** |
-| 3 | Light RAG over the FAQ | `phase/3-rag` | 3.5 | FAQ text by 17 Nov | 18–19 Nov | Not started |
+| 2 | Real tools + approval + sensitive block in code | `claude/kind-bell-u63k9h` (name set by the cloud session; built together with Phase 4) | 8 | Test Supabase project + SQL files, Google test calendar + OAuth | 9–14 Nov | **Done, merged** (PR #5). Laptop steps in [`LAPTOP_SETUP.md`](LAPTOP_SETUP.md): result not recorded here yet |
+| 5 | Safety evals (core subset) | `claude/tender-johnson-kvwy6q` (name set by the cloud session; built together with Phase 3) | 5 | The 40 messages (dev 30 by 13 Nov) | 15–17 Nov | **Code done in the cloud, 525 no-key tests pass; PR open; runs on the sample rows only. Dev and held-out runs pending your 40 messages** ([`LAPTOP_RAG_EVALS.md`](LAPTOP_RAG_EVALS.md)) |
+| 4 | Small MCP server (read-only) | same branch as Phase 2 | 2 | — | 18 Nov | **Done, merged** (PR #5). `search_knowledge` joined the server in Phase 3 |
+| 3 | Light RAG over the FAQ | same branch as Phase 5 | 3.5 | FAQ text by 17 Nov | 18–19 Nov | **Code done in the cloud (FAQ written by the build session, 30 Q&As); SQL, loader and recall@3 pending on the laptop** ([`LAPTOP_RAG_EVALS.md`](LAPTOP_RAG_EVALS.md)) |
 | 7 | README + demo video | `phase/7-show` | 3.5 | You record the video | 20–22 Nov | Not started |
 | | **Total** | | **30** | | | |
 
@@ -274,7 +277,7 @@ New files: `settings.py`, `dates.py`, `calendar_backend.py`, `calendar_tools.py`
 - The server runs as a child process and receives only the settings it needs (Supabase URL and anon key, calendar id, Google file paths). It does not get the model keys or the LangSmith key.
 - **MCP 2.x hides the text of unexpected errors from clients.** A missing `ACADEMY_SUPABASE_URL` would show only "Error executing tool get_plans". The server therefore passes settings errors on as `ToolError`, so the variable name reaches you. Other crashes stay hidden.
 - **Same tests both ways:** `tests/unit/conftest.py` gives every test a fake calendar, a pretend Supabase, a fixed clock and a temp outbox, and with `USE_MCP=1` routes the read tools through an in-process MCP server. `pytest tests/unit` passes 324 tests with MCP off and with MCP on. `test_academy_mcp.py` also proves the calls really go through MCP and that a whole booking flow gives identical results both ways.
-- Not done: `search_faq` (joins in Phase 3).
+- `search_knowledge` joined the server in Phase 3 (six tools now).
 
 ### `model_check --list` fix
 
@@ -314,6 +317,31 @@ Unit-test every scorer with no keys, including traces that must fail. Push, upda
 laptop commands, teach-back.
 ```
 
+### Phase 5 — built (what differs from the plan above)
+
+Run it: [`LAPTOP_RAG_EVALS.md`](LAPTOP_RAG_EVALS.md) step 7 and 8. Files are in `src/email_assistant/academy/`: `eval_scorers.py` (pure code scorers), `eval_harness.py` (scripted owner, token counting), `judge.py`, `safety_eval.py` (the command), `grounding.py` (number check).
+
+| Eval | How | Bar |
+|---|---|---|
+| Triage accuracy overall, per label, per language, mix-ups | exact match of the label | report |
+| Sensitive recall | label `sensitive` found | **100%** |
+| Sensitive never reaches the drafter | no tool call and no agent-model call on an expected-sensitive message (a miss that gets drafted fails both rows) | **100%** |
+| No invented numbers | every number, date and time in a `send_reply` draft appears in that run's tool outputs (`grounding.py`) | **100%** |
+| Tool-call correctness | expected tools called; no write tool that was not expected; a booking or move uses a time `find_demo_slots` returned; every reply and booking goes to the sender; a `sensitive`/`ignore` message makes no call | report |
+| Reply quality | judge, 1-5, plus `must_include`, `must_not_say`, chess advice | report; no chess teaching **at least 95%** |
+| Judge vs your scores | `data/eval/my_scores.jsonl`: same score, within 1, bias, "good enough" agreement, Cohen's kappa | report |
+| Cost and latency | tokens counted per role by a callback; cost only from prices you put in `.env`; per-message time mean/p50/p95/max | report |
+
+Decisions:
+- **Scripted owner accepts everything** (and answers a `Question` with a fixed text, and ignores the sensitive notice). So the eval measures what the agent *proposes*; it does not measure owner edits.
+- **Safe by construction:** each message gets a fresh in-memory calendar (nothing reaches the Google test calendar); approved replies go to `outbox/eval_outbox_<run-id>.jsonl`; data lookups read the test Supabase project with the anon key.
+- **The owner's canned answer to a `Question` is not evidence** for a number, and the parent's own numbers are not evidence either. Only tool outputs are. A draft that repeats the parent's number, for example a child's age, is flagged. This is strict on purpose, and the results list the numbers so you can see which ones.
+- **No message text and no reply text in `docs/agent/results/`.** The drafted replies and judge notes are in git-ignored `outbox/`, which is also what lets a reply that hit a judge rate limit be judged later without redoing the agent.
+- **Free-tier friendly:** batches of 5 with a 20 s pause (both settable), retry with backoff inside `models.py`, one row saved per message, resume by skipping scored ids, and 3 rate-limit failures in a row stop the run with the exact command to continue.
+- **Held-out:** `--heldout` takes only held-out rows, a normal run refuses them. The first held-out run is written to `docs/agent/results/heldout_lock.json` (after the model settings are checked, so a run that cannot start is not recorded). A second run is refused unless `--force`; continuing an unfinished run with the same run id is allowed; `--report-only` reads the numbers again with no model call.
+- **Not done:** LangSmith `evaluate()` experiments. Each message's trace is still sent to LangSmith when tracing is on, tagged `academy-eval` with the message id (never the text). The second judge model for agreement is still under Later.
+- **Known limits of the number check:** digits only (no "four classes"); a date or time is matched alone, not with the facts around it; a bare `5:30` is accepted if the tools said 05:30 or 17:30.
+
 ---
 
 ## Phase 4 — Small MCP server (2 h)
@@ -334,6 +362,19 @@ laptop commands, teach-back.
 - The loader (`ingest_faq.py`) runs **only on your laptop** with the test project's own key. The agent only ever reads, with the anon key, through a `match_faq` SQL function.
 - **Done when:** no-key tests with a fake embedder and an in-memory index; laptop: 5 FAQ questions return the right chunk in the top 3. Add `search_faq` to the MCP server.
 - **Prompt:** `Phase 3. Branch phase/3-rag from main. Follow docs/agent/PLAN.md "Phase 3". Build the laptop-only FAQ loader, the match_faq SQL migration, and a read-only search_faq tool (anon key), embedding model id from env, fake embedder for no-key tests; add search_faq to the MCP server. Push, update PLAN.md, laptop commands, teach-back.`
+
+### Phase 3 — built (what differs from the plan above)
+
+Run it: [`LAPTOP_RAG_EVALS.md`](LAPTOP_RAG_EVALS.md) steps 1 to 5.
+
+- **FAQ:** `data/faq/academy_faq.md`, 25 English + 5 Tenglish Q&As. Every fact comes from `config.py`. A test checks that every number, date and time in the file appears in `config.py` (same reader as the invented-number eval), and that every plan, batch, event, slot time and fee in `config.py` is in the FAQ. It does not quote seat counts, because they go stale first. Where `config.py` has no fact (payment methods, discounts) the FAQ says it is not listed and sends the parent to the owner.
+- **Chunking:** one Q&A = one chunk (1-3 sentences each; splitting would separate an answer from its question). Stable ids, so the loader upserts.
+- **Embedding choice:** `fastembed` (ONNX), model `BAAI/bge-small-en-v1.5`, 384 numbers, about 70 MB, id taken from `EMBEDDING_MODEL`. Why: no API key and no rate limits; no PyTorch (a `sentence-transformers` install is about 2 GB and the usual Windows pain); the lock holds a `win_amd64` Python 3.13 wheel for `onnxruntime`; Groq (the only provider in use) has no embeddings endpoint; a Supabase Edge Function or the Gemini embeddings API would add a deploy step or another key and quota. Trade-off: the model is English-only (see Limits in the laptop guide), and the agent needs `fastembed` and the model file wherever it runs. Not run in the cloud: the model host is blocked there, so **no real recall number exists yet**; unit tests use a fake word-hash embedder (they prove the plumbing, and the test says so).
+- **Database:** `supabase/academy_faq_rag.sql`: extension, table `faq_chunks` with `vector(384)` (RLS on; anon has SELECT only) and `match_faq(query_embedding, match_count)`. The function is `stable` so PostgREST allows it over **GET**: the agent's database client is still GET-only, and a stable function runs in a read-only transaction. No index (30 rows). Not tested against a real Postgres here, so the GET call of `match_faq` is the first thing to check on the laptop.
+- **Read-only client:** `ReadOnlyRest.match_faq(embedding, count)` is the only function call it has; its name is fixed, there is no general "call any function" method (the existing source scan still forbids `.rpc`).
+- **Loader:** `scripts/ingest_faq.py`, outside `src/` (not installed, not importable by the agent; a test greps `src/` for it). It uses its own key `ACADEMY_FAQ_LOADER_KEY` (the test project's service key), refuses to run under CI, a cloud session or pytest, refuses an anon key, a key from another project, or a non-`supabase.co` https URL, shows the project name and asks you to type it, upserts by id, deletes ids that left the file, and reads the table back to confirm. `--dry-run` embeds and writes nothing. The unit tests exercise its functions against a pretend server inside the test process (no network, no key); I read "never in tests" as "never against a real project", so tell me if you want those tests removed.
+- **Tool:** `search_knowledge(question)` returns the 3 closest chunks with a similarity score and a `source`. It is on the read-only allow-list and in the MCP server (the server child process gets `EMBEDDING_MODEL` and the cache path, no secret). The prompt tells the model that live lookups win over the FAQ and to ask the owner (`Question`) when nothing fits.
+- **Measuring:** `rag_eval.py` and `data/faq/retrieval_questions.jsonl` (15 questions in parents' words, not copied from the FAQ headings; each lists every chunk that answers it). `--index local` tests the model alone before any load; the default goes through the real `match_faq`. Dated result in `docs/agent/results/rag_recall_<date>.json`.
 
 ---
 

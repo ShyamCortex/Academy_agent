@@ -137,7 +137,7 @@ To decline instead, resume with `[{"type": "ignore"}]`. Then nothing is written.
 uv run python -m email_assistant.academy.mcp_bridge get_plans
 ```
 
-It starts the MCP server as a child process, lists its tools (exactly five, all read-only), and calls `get_plans`.
+It starts the MCP server as a child process, lists its tools (exactly six since Phase 3, all read-only), and calls `get_plans`.
 To make the agent use MCP for its read-only tools, put `USE_MCP=1` in `.env` and restart `langgraph dev`.
 Write tools never go over MCP.
 

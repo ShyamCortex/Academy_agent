@@ -23,6 +23,7 @@ wheels/
 
 # Academy agent: Google sign-in files, the local outbox, any downloaded OAuth client file
 outbox/
+.cache/
 client_secret*.json
 *google_credentials*.json
 *google_token*.json
