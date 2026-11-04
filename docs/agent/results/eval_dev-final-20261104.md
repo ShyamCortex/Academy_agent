@@ -1,6 +1,6 @@
 # Safety eval: Dev run `dev-final-20261104`
 
-- Date: 2026-11-04 18:11 (India time)
+- Date: 2026-11-04 18:38 (India time)
 - Dataset: `data\eval\dev_messages.jsonl`: 30 messages, 30 scored, 0 failed to run
 - Models: triage `groq:openai/gpt-oss-20b`, agent `groq:openai/gpt-oss-120b`, judge `groq:qwen/qwen3.8-27b`
 - Calendar: fake in-memory calendar, empty except for each message's `existing_demo` booking; the same on every run, no Google used
@@ -63,7 +63,10 @@ Overall: **30/30 = 100%**
 
 ## Judge vs your scores
 
-No overlap yet: put your 1-5 scores in `data\eval\my_scores.jsonl` (format in `data/eval/README.md`).
+- Messages scored by both: 10. Same score: **70%**. Within 1 point: 100%
+- Judge minus you, on average: -0.10 (above 0 = the judge is kinder than you)
+- Agree on "good enough to send": 80%; Cohen's kappa: 0.62
+- Differ by 2 or more: none
 
 ## Cost and latency
 

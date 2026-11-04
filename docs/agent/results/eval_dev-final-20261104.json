@@ -2,7 +2,7 @@
   "meta": {
     "run_id": "dev-final-20261104",
     "heldout": false,
-    "date": "2026-11-04 18:11",
+    "date": "2026-11-04 18:38",
     "dataset": "data\\eval\\dev_messages.jsonl",
     "has_samples": false,
     "calendar": "fake",
@@ -145,7 +145,16 @@
       "chess_advice_ids": [],
       "no_chess_teaching": 1.0
     },
-    "agreement": null,
+    "agreement": {
+      "n": 10,
+      "exact": 0.7,
+      "within_one": 1.0,
+      "bias": -0.1,
+      "good_enough_agreement": 0.8,
+      "good_enough_kappa": 0.6153846153846155,
+      "disagreements": [],
+      "judged_but_not_scored_by_you": 12
+    },
     "targets": [
       {
         "name": "sensitive_recall",
