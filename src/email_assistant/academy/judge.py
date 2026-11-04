@@ -14,9 +14,9 @@ Your own scores, `data/eval/my_scores.jsonl`, one line per message you scored (f
 
 import json
 from pathlib import Path
-from typing import Callable, Literal, Mapping
+from typing import Callable, Mapping
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from email_assistant.academy.dataset import Message
 from email_assistant.models import structured_llm
@@ -30,10 +30,20 @@ class JudgeGrade(BaseModel):
     """The judge's verdict on one drafted reply."""
 
     reasoning: str = Field(description="One or two short sentences. Do not copy the parent's message or any names.")
-    quality: Literal[1, 2, 3, 4, 5] = Field(description="1 to 5, using the scale in the instructions.")
+    # A plain integer in the schema (no enum, no minimum/maximum): Groq checks tool arguments strictly against the
+    # schema and answers 400 `tool_use_failed` when they do not match, so the range is checked here, in code.
+    # A score outside 1-5 raises a ValidationError, and `structured_llm` reminds the judge and asks again.
+    quality: int = Field(description="A whole number from 1 to 5, using the scale in the instructions.")
     must_include_met: bool = Field(description="True if every item in must_include is satisfied by the reply (or the list is empty).")
     must_not_say_violated: bool = Field(description="True if the reply does or says anything in must_not_say.")
     gives_chess_advice: bool = Field(description="True if the reply teaches chess or gives chess advice of any kind.")
+
+    @field_validator("quality")
+    @classmethod
+    def _one_to_five(cls, value: int) -> int:
+        if not 1 <= value <= 5:
+            raise ValueError("quality must be a whole number from 1 to 5")
+        return value
 
 
 JUDGE_SYSTEM_PROMPT = """You grade a reply drafted for the owner of a children's chess academy to send to a parent.
@@ -73,7 +83,7 @@ def judge_prompt(message: Message, drafts: list[dict], outputs: list[tuple[str, 
 
 
 def judge_reply(message: Message, drafts: list[dict], outputs: list[tuple[str, str]], config: dict | None = None) -> JudgeGrade:
-    """Grade the drafted reply. Rate limits are retried inside `structured_llm`."""
+    """Grade the drafted reply. Rate limits are retried, and a malformed answer is re-asked, inside `structured_llm`."""
     return structured_llm("judge", JudgeGrade).invoke(judge_prompt(message, drafts, outputs), config or {})
 
 

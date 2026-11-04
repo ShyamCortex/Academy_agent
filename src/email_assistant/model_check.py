@@ -5,7 +5,8 @@
     python -m email_assistant.model_check --ping     make a few tiny real calls and report PASS / FAIL
 
 `--ping` tests the exact things the graphs depend on: structured output (triage and
-memory), forced tool calls (`tool_choice="required"` and `"any"`), and the judge.
+memory), forced tool calls (`tool_choice="required"` and `"any"`), and the judge (the same
+`JudgeGrade` schema and prompt the safety eval uses, on a made-up reply).
 It uses only made-up text. Run it before the long test suite.
 """
 
@@ -16,21 +17,12 @@ import time
 from typing import Callable
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
-
-from email_assistant.models import ROLE_ENV_VARS, structured_llm, tool_llm
+from email_assistant.models import ROLE_ENV_VARS, describe_error, structured_llm, tool_llm
 from email_assistant.schemas import RouterSchema, UserPreferences
 from email_assistant.tools import get_tools
 
 # Environment variables that hold secrets. We only ever report "set" or "missing".
 KEY_VARS = ["GOOGLE_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "LANGSMITH_API_KEY"]
-
-
-class Grade(BaseModel):
-    """Tiny schema to check that the judge model can return structured output."""
-
-    grade: bool = Field(description="Is the answer correct?")
-    justification: str = Field(description="One sentence why.")
 
 
 def _scrub(text: str) -> str:
@@ -94,7 +86,8 @@ def _check(label: str, fn: Callable[[], str]) -> bool:
     try:
         detail = fn()
     except Exception as exc:
-        print(f"FAIL {label}: {type(exc).__name__}: {_scrub(str(exc))[:300]}")
+        # Only made-up text goes into these calls, so the error text is safe to show (keys are scrubbed).
+        print(f"FAIL {label}: {describe_error(exc)}: {_scrub(str(exc))[:300]}")
         return False
     print(f"PASS {label} ({time.time() - start:.1f}s) {detail}")
     return True
@@ -131,18 +124,25 @@ def ping() -> bool:
         return f"profile={out.user_preferences[:60]!r}"
 
     def judge() -> str:
-        out = structured_llm("judge", Grade).invoke([
-            {"role": "system", "content": "Grade the answer."},
-            {"role": "user", "content": "Question: 2+2? Answer: 4. Is the answer correct?"},
-        ])
-        return f"grade={out.grade}"
+        from email_assistant.academy.dataset import Message
+        from email_assistant.academy.judge import judge_reply
+
+        made_up = Message(
+            id="PING-01", split="dev", language="en", expected_label="fees_plans", expected_tool_calls=["get_plans"],
+            text="Hello, how many classes a month does the Starter plan have, and what is the fee?",
+            must_include=["Starter plan classes per month", "Starter plan fee"], must_not_say=["Chess advice"],
+        )
+        outputs = [("get_plans", '{"source": "made up", "plans": [{"name": "Starter", "classes_per_month": 4, "fee_rupees": 1000}]}')]
+        drafts = [{"subject": "Re: plans", "body": "Hello! The Starter plan has 4 classes a month and costs Rs 1000 a month. Thank you."}]
+        out = judge_reply(made_up, drafts, outputs)
+        return f"quality={out.quality} chess_advice={out.gives_chess_advice}"
 
     results = [
         _check("triage  structured output (TRIAGE_MODEL)", triage),
         _check("agent   forced tool call, tool_choice='required' (AGENT_MODEL)", tools_call("required")),
         _check("agent   forced tool call, tool_choice='any' (AGENT_MODEL)", tools_call("any")),
         _check("agent   structured output for memory (AGENT_MODEL)", memory),
-        _check("judge   structured output (JUDGE_MODEL)", judge),
+        _check("judge   eval grade, JudgeGrade structured output (JUDGE_MODEL)", judge),
     ]
     print("ALL PASS" if all(results) else "SOME CHECKS FAILED")
     return all(results)

@@ -162,7 +162,7 @@ def test_a_judge_that_hits_a_rate_limit_leaves_the_reply_waiting_and_the_next_ru
     dataset = write(env / "dev.jsonl", [row_for("d1", "book_demo", BOOK)])
     limited = [RuntimeError("429 Too Many Requests: rate limit")] * 2         # first try + one retry
     code, output, out = cli(env, dataset, triage_script=["book_demo"], agent_script=drafting(), judge_script=limited)
-    assert code == 2 and "d1: failed (RuntimeError) - rate limit" in output and "waiting for the judge" in output
+    assert code == 2 and "d1: judge failed (RuntimeError) - rate limit" in output and "waiting for the judge" in output
     assert saved_rows(out)[-1]["judge_status"] == "pending"
     # The agent and triage fakes below have NO answers: the agent stage must not run again.
     code, _, out = cli(env, dataset, judge_script=[good_grade(4)])
@@ -404,3 +404,41 @@ def test_a_failed_message_also_records_the_calendar(env):
     dataset = write(env / "dev.jsonl", [row_for("d1", "book_demo", BOOK)])
     _, _, out = cli(env, dataset, triage_script=["book_demo"], agent_script=[ValueError("x")])
     assert latest(out)["d1"]["status"] == "error" and latest(out)["d1"]["calendar"] == "fake"
+
+
+# ---- a Groq 400 from the judge -------------------------------------------------------------------------
+
+def groq_400(code="tool_use_failed", message="tool call validation failed: parameters for tool JudgeGrade did not match schema"):
+    """A real groq.BadRequestError, built the way the Groq SDK builds it from a 400 answer."""
+    import groq
+    import httpx
+
+    request = httpx.Request("POST", "https://api.groq.invalid/openai/v1/chat/completions")
+    body = {"error": {"message": f"{message} {SECRET_TEXT}", "type": "invalid_request_error", "code": code,
+                      "failed_generation": f"{SECRET_TEXT} quality: five"}}
+    return groq.BadRequestError(f"Error code: 400 - {body}", response=httpx.Response(400, request=request), body=body)
+
+
+def test_a_judge_tool_use_failed_400_is_re_asked_and_the_reply_is_judged(env):
+    dataset = write(env / "dev.jsonl", [row_for("d1", "book_demo", BOOK)])
+    code, output, out = cli(env, dataset, triage_script=["book_demo"], agent_script=drafting(), judge_script=[groq_400(), good_grade(4)])
+    assert code == 0 and "d1: ok" in output
+    assert saved_rows(out)[-1]["judge_status"] == "done" and saved_rows(out)[-1]["judge"]["quality"] == 4
+
+
+def test_a_judge_that_keeps_failing_logs_the_stage_type_and_groq_code_but_never_the_text(env):
+    dataset = write(env / "dev.jsonl", [row_for("d1", "book_demo", BOOK)])
+    code, output, out = cli(env, dataset, triage_script=["book_demo"], agent_script=drafting(), judge_script=[groq_400()] * 3)
+    assert "d1: judge failed (BadRequestError, code tool_use_failed)" in output
+    assert SECRET_TEXT not in output and "did not match" not in output and "quality: five" not in output
+    assert saved_rows(out)[-1]["judge_status"] == "pending"          # the reply waits for a judge that works
+
+
+def test_an_agent_failure_saves_the_groq_code_in_the_row(env):
+    dataset = write(env / "dev.jsonl", [row_for("d1", "book_demo", BOOK)])
+    code, output, out = cli(env, dataset, triage_script=["book_demo"], agent_script=[groq_400(code="model_decommissioned", message="gone")])
+    assert "d1: agent failed (BadRequestError, code model_decommissioned)" in output
+    row = saved_rows(out)[-1]
+    assert (row["status"], row["error"], row["error_code"]) == ("error", "BadRequestError", "model_decommissioned")
+    assert SECRET_TEXT not in json.dumps(row)
+

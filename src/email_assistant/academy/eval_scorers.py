@@ -152,9 +152,12 @@ def score_trace(message: Message, trace: Trace) -> dict:
 
 
 def error_row(message: Message, exc: BaseException) -> dict:
-    """A row for a message whose run failed. The error type only, never its text (it may quote the message)."""
+    """A row for a message whose run failed. The error type and the provider's error code only, never the text (it may quote the message)."""
+    from email_assistant.models import error_code
+
     return {"id": message.id, "split": message.split, "language": message.language, "sample": message.sample,
-            "status": "error", "error": type(exc).__name__, "expected_label": message.expected_label, "predicted_label": None}
+            "status": "error", "error": type(exc).__name__, "error_code": error_code(exc),
+            "expected_label": message.expected_label, "predicted_label": None}
 
 
 # ---- run-level numbers -----------------------------------------------------------------------------

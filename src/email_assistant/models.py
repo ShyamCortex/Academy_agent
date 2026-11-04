@@ -20,6 +20,7 @@ importing the code works with no API keys, and why tests can swap in a fake mode
 
 import os
 import random
+import re
 import time
 from contextlib import contextmanager
 from typing import Any, Callable, Optional, Sequence
@@ -183,6 +184,78 @@ def tool_call_nudge(exc: BaseException) -> Optional[str]:
     return None
 
 
+# Structured output (the judge, triage, memory). With Groq, `with_structured_output` is a forced call
+# of one tool named after the schema, so the same mistakes happen: a 400 `tool_use_failed` (no call, or
+# arguments that break the schema), no tool call at all (the answer comes back as None), or values our
+# own checks refuse (a pydantic ValidationError).
+NUDGE_STRUCTURED = (
+    "Answer only by calling the {name} tool once, with every field filled in and each value of the type "
+    "its schema gives (numbers as numbers, true/false as booleans). Do not answer in plain text."
+)
+
+
+class NoStructuredAnswerError(RuntimeError):
+    """The model had to answer in a fixed format (a schema), but gave nothing usable."""
+
+
+def structured_answer_nudge(schema_name: str) -> Callable[[BaseException], Optional[str]]:
+    """The `recover` function for structured output: a reminder for mistakes the model can fix, else None.
+
+    Like `tool_call_nudge`, the reminder never repeats the model's output or the error text.
+    """
+    from langchain_core.exceptions import OutputParserException
+    from pydantic import ValidationError
+
+    reminder = NUDGE_STRUCTURED.format(name=schema_name)
+
+    def nudge(exc: BaseException) -> Optional[str]:
+        if isinstance(exc, (NoStructuredAnswerError, ValidationError, OutputParserException)):
+            return reminder
+        return reminder if "tool_use_failed" in str(exc).lower() else None
+
+    return nudge
+
+
+# ---------------------------------------------------------------------------
+# Describing an error without its text
+# ---------------------------------------------------------------------------
+
+# A provider error code is a short identifier such as "tool_use_failed" or "rate_limit_exceeded".
+_CODE_SHAPE = re.compile(r"[A-Za-z0-9_.\-]{1,64}")
+_CODE_IN_TEXT = re.compile(r"""['"]code['"]\s*:\s*['"]([A-Za-z0-9_.\-]{1,64})['"]""")
+
+
+def error_code(exc: BaseException) -> Optional[str]:
+    """The provider's error code (Groq: `body["error"]["code"]`, e.g. "tool_use_failed"), or None.
+
+    Only a short identifier is ever returned, never message text: the text of a model error can quote
+    the parent's message or the model's output. Looks at the error and the errors that caused it.
+    """
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        body = getattr(exc, "body", None)
+        if isinstance(body, dict):
+            inner = body.get("error", body)
+            code = inner.get("code") if isinstance(inner, dict) else None
+            if isinstance(code, str) and _CODE_SHAPE.fullmatch(code):
+                return code
+        code = getattr(exc, "code", None)
+        if isinstance(code, str) and _CODE_SHAPE.fullmatch(code):
+            return code
+        found = _CODE_IN_TEXT.search(str(exc))  # SDKs that only keep the body as text: take the code, nothing else
+        if found:
+            return found.group(1)
+        exc = exc.__cause__ or exc.__context__
+    return None
+
+
+def describe_error(exc: BaseException) -> str:
+    """Safe to print or log: the error's type and its provider code, never its message text."""
+    code = error_code(exc)
+    return f"{type(exc).__name__}, code {code}" if code else type(exc).__name__
+
+
 # ---------------------------------------------------------------------------
 # Lazy models
 # ---------------------------------------------------------------------------
@@ -258,8 +331,19 @@ def _lazy(
 
 
 def structured_llm(role: str, schema: type) -> Runnable:
-    """A model that must answer with an instance of `schema` (a Pydantic class)."""
-    return _lazy(role, lambda model: model.with_structured_output(schema), f"{role}_structured_{schema.__name__}")
+    """A model that must answer with an instance of `schema` (a Pydantic class).
+
+    If the answer is missing or does not fit the schema (including a Groq 400 `tool_use_failed`), the
+    model is reminded and asked again, up to MAX_NUDGES times, the same way `tool_llm` does it.
+    """
+    def check(result: Any) -> None:
+        if result is None:
+            raise NoStructuredAnswerError(f"The model gave no {schema.__name__} answer.")
+
+    return _lazy(
+        role, lambda model: model.with_structured_output(schema), f"{role}_structured_{schema.__name__}",
+        check=check, recover=structured_answer_nudge(schema.__name__),
+    )
 
 
 def tool_llm(role: str, tools: Sequence[Any], tool_choice: Optional[str] = None) -> Runnable:
