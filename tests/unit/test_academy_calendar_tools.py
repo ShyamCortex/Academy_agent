@@ -216,9 +216,42 @@ def test_rescheduling_moves_the_same_event(academy_world):
     assert "2026-11-07T10:00" in slots(academy_world) and "2026-11-09T17:00" not in slots(academy_world)
 
 
-def test_an_event_can_move_to_a_time_that_overlaps_its_own_old_time(academy_world):
+def test_an_event_does_not_block_its_own_move(academy_world):
+    # No two demo slots overlap, so "move onto its own time" is the case left: the event being moved is not "taken".
     book()
-    assert move(new_day="2026-11-07", start="10:15", end="11:00")["rescheduled"] is True
+    assert move(new_day="2026-11-07", start="10:00", end="10:45")["rescheduled"] is True
+
+
+@pytest.mark.parametrize("case", NOT_SLOTS)
+def test_a_reschedule_to_a_time_that_is_not_a_demo_slot_is_refused_and_nothing_moves(academy_world, case):
+    book()
+    day, start, end = NOT_SLOTS[case]
+    result = move(new_day=day, start=start, end=end)
+    assert result["rescheduled"] is False
+    assert "not a demo slot" in result["error"] and "find_demo_slots" in result["error"]
+    assert [e["start"] for e in academy_world.calendar.events.values()] == [at("2026-11-07", "10:00")]
+    assert "move_demo" not in academy_world.calendar.calls
+
+
+@pytest.mark.parametrize("end", ["17:30", "18:00", "17:46"])
+def test_a_reschedule_to_a_demo_slot_with_the_wrong_length_is_refused(academy_world, end):
+    book()
+    result = move(start="17:00", end=end)
+    assert result["rescheduled"] is False and f"exactly {config.DEMO_CLASS_MINUTES} minutes" in result["error"]
+    assert [e["start"] for e in academy_world.calendar.events.values()] == [at("2026-11-07", "10:00")]
+
+
+def test_every_slot_find_demo_slots_offers_is_a_valid_reschedule_target(academy_world):
+    book()
+    for slot in slots(academy_world, "2026-11-08", "2026-11-30"):
+        start = at(*slot.split("T"))
+        end = dates.iso_minutes(start + timedelta(minutes=config.DEMO_CLASS_MINUTES))
+        result = json.loads(reschedule_demo.invoke({"parent_email": PARENT, "child_first_name": "Arjun", "new_start": slot, "new_end": end}))
+        assert result["rescheduled"] is True, (slot, result)
+
+
+def test_the_reschedule_tool_text_tells_the_model_to_use_a_returned_slot():
+    assert "free_slots from find_demo_slots" in reschedule_demo.description
 
 
 def test_rescheduling_into_someone_elses_time_is_refused(academy_world):
@@ -242,7 +275,7 @@ def test_rescheduling_with_nothing_booked_or_two_booked_is_an_error(academy_worl
     assert move()["rescheduled"] is False
     for day in ("2026-11-07", "2026-11-09"):  # two events for the same parent and child, made behind the tool's back
         academy_world.calendar.create_demo("Demo class - Arjun", at(day, "10:00"), at(day, "10:45"), PARENT, "Arjun")
-    result = move(new_day="2026-11-14")
+    result = move(new_day="2026-11-14", start="10:00", end="10:45")  # a real Saturday slot, so only the "two booked" rule can refuse it
     assert result["rescheduled"] is False and "Question" in result["error"]
 
 

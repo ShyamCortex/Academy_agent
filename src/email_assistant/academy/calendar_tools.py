@@ -165,7 +165,7 @@ def _only_demo(calendar: CalendarBackend, parent_email: str, first: str):
 
 @tool
 def reschedule_demo(parent_email: str, child_first_name: str, new_start: str, new_end: str) -> str:
-    """Move a booked demo class to a new time. new_start and new_end are strings like 2026-11-07T14:00 (India time)."""
+    """Move a booked demo class to a new time. new_start must be one of the free_slots from find_demo_slots, and new_end is new_start plus the demo length. Both are strings like 2026-11-07T10:00 (India time)."""
     calendar = get_calendar()
     first = _first_name(child_first_name)
     problem = _bad_event_input(parent_email, first)
@@ -175,7 +175,7 @@ def reschedule_demo(parent_email: str, child_first_name: str, new_start: str, ne
         except ValueError:
             problem = "new_start and new_end must look like 2026-11-07T14:00."
         else:
-            problem = _bad_window(begins, ends, dates.now_ist())
+            problem = _bad_window(begins, ends, dates.now_ist()) or _not_a_demo_slot(begins, ends)
     if problem:
         return _json(calendar, {"rescheduled": False, "error": problem})
     try:
