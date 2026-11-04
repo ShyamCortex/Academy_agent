@@ -476,5 +476,17 @@ Deprecation seen at runtime: `StateGraph(State, input=StateInput)` →
 | Read-only client | The existing source scan treats `.rpc` as a write call. `match_faq` is a fixed-name method instead, and the GET-only transport still refuses everything else. The scan test for "public methods" now expects `from_env`, `match_faq`, `select`. |
 | `match_faq` over GET | PostgREST allows GET for `stable`/`immutable` functions. **UNKNOWN until run on the laptop:** the vector travels as a 384-number text in the query string (about 3.5 KB). |
 | Eval harness | The parent graph's final state holds all messages of the drafting subgraph, so one state read gives the tool calls and tool results. A LangChain callback sees each model call; the role (triage, agent, judge) is read from the wrapper names in `models.py`. |
-| Calendar tool gap found while writing the tool-call scorer | `create_demo_event` accepted any free time, even outside the academy's demo hours; only the prompt said to use a slot from `find_demo_slots`. **Fixed:** the tool now rejects any start that is not a demo slot (same day/time/length rules as `find_demo_slots`), and the eval still checks it. **Still open:** `reschedule_demo` has the same gap for `new_start`. |
+| Calendar tool gap found while writing the tool-call scorer | `create_demo_event` accepted any free time, even outside the academy's demo hours; only the prompt said to use a slot from `find_demo_slots`. **Fixed:** the tool now rejects any start that is not a demo slot (same day/time/length rules as `find_demo_slots`), and the eval still checks it. **Fixed later** (`claude/vibrant-einstein-w3t96j`, name set by the cloud session): `reschedule_demo` has the same check for `new_start`. |
 | Tests that run with no keys | 571 in `tests/unit/` (was 324), with MCP off and on. |
+
+---
+
+## 16. Addendum from the first safety-eval trial (2026-11-04)
+
+| Item | Finding |
+|---|---|
+| Groq structured output | `langchain-groq` `with_structured_output` defaults to `method="function_calling"`: a forced call of one tool named after the schema. So a Groq 400 `tool_use_failed` can happen there too, and when the model calls no tool the parser returns `None` (no error). `structured_llm` had no recovery for either. |
+| Groq error code | `groq` 0.37.1 errors keep the parsed JSON on `exc.body`; the code is `body["error"]["code"]` (e.g. `tool_use_failed`). `models.error_code` reads only that short id, never the message or `failed_generation` (they can quote the parent's message or the model output). |
+| `Literal[1, 2, 3, 4, 5]` | Becomes `{"enum": [1,2,3,4,5], "type": "integer"}` in the tool schema. Groq checks tool arguments strictly against it. Now a plain `integer`; the range is checked by a pydantic validator, and a refused value is re-asked. |
+| Tests that run with no keys | 609 in `tests/unit/` (was 571), with MCP off and on. |
+
