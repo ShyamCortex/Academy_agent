@@ -114,7 +114,7 @@ def call_with_backoff(
                 raise
             wait = min(max_seconds, initial_seconds * 2**attempt)
             # jitter: wait 50-100% of the planned time so parallel callers do not retry in lockstep
-            _sleep(wait * random.uniform(0.5, 1.0))
+            _sleep(wait * random.uniform(0.8, 1.0))
             attempt += 1
 
 
