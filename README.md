@@ -67,7 +67,7 @@ Code: `src/email_assistant/academy/graph.py`. The graph is registered as `academ
 
 ## Safety rules, and the code and test that prove each one
 
-These rules are enforced in code. A prompt that says "please don't" is not counted as proof. The "Test" column names the test file under `tests/unit/`. There are 777 tests and they run with no API keys (checked on 5 Nov 2026).
+These rules are enforced in code. A prompt that says "please don't" is not counted as proof. The "Test" column names the test file under `tests/unit/`. There are 793 tests and they run with no API keys (count recorded in `docs/agent/PLAN.md`, 5 Nov 2026).
 
 | Rule | Where it is enforced | Test that proves it |
 |---|---|---|
@@ -82,7 +82,7 @@ These rules are enforced in code. A prompt that says "please don't" is not count
 
 A test that cannot fail proves nothing. `scripts/mutation_check.py` breaks the safety checks on purpose, one small change at a time, in a throwaway copy of the repo. It then runs the unit tests. A change the tests do not notice is a "survivor".
 
-**Today (5 Nov 2026): 67 of 67 mutations caught, no survivors.** I ran the full script on the current code. The set grew in three steps (43, then 10, then 14).
+**77 of 77 mutations caught, no survivors. Recorded on 5 Nov 2026 in `docs/agent/PLAN.md`.** I did not re-run the full script for this README (it takes about 25 minutes). The set grew in four steps (43, 10, 14, 10).
 
 ```powershell
 python -m uv run python scripts/mutation_check.py            # all mutations
@@ -104,7 +104,7 @@ Everything in the dev column is copied from one committed file: `docs/agent/resu
 | Triage accuracy, English / Telugu / Tenglish | 25/25, 1/1, 4/4 | pending <!-- HELDOUT --> |
 | Sensitive recall (bar 100%) | 100% (4 of 4) | pending <!-- HELDOUT --> |
 | Sensitive never reaches the drafter (bar 100%) | 100% | pending <!-- HELDOUT --> |
-| Drafts with every number in the tool outputs (bar 100%) | **20 of 22 = 91%. Bar missed.** Offenders: pm-004 (dates 7, 14, 21), pm-020 (5 pm) | pending <!-- HELDOUT --> |
+| Drafts with every number in the tool outputs (bar 100%) | **20 of 22 = 91%. Bar missed.** (see note below the table) | pending <!-- HELDOUT --> |
 | Tool calls correct end to end | 28/30 = 93% (pm-003 and pm-020 missed a booking or a move) | pending <!-- HELDOUT --> |
 | No chess teaching, by the judge (bar 95%) | 100% (22 replies judged) | pending <!-- HELDOUT --> |
 | Judge quality score, mean | 3.82 of 5 (22 replies; scores 3: 11, 4: 4, 5: 7) | pending <!-- HELDOUT --> |
@@ -114,9 +114,11 @@ Everything in the dev column is copied from one committed file: `docs/agent/resu
 | Tokens per message (triage + agent + judge) | 6,840 | pending <!-- HELDOUT --> |
 | Time per message, mean / p95 | 21.1 s / 44.6 s (includes waits for rate limits) | pending <!-- HELDOUT --> |
 
+Note on the 20 of 22: pm-004 was a false flag. All four dates were in the tool output, but the v1 check could not read "7, 14, 21 and 28 November". pm-020's "5 pm" is the parent's requested time quoted back, which the tools never returned. The v2 check reads these formats.
+
 **v1 numbers use the v1 checks; the checks got stricter in v2.** Today's code grades the same v1 replies more strictly, so re-grading them would give different numbers. These are the numbers as they were measured. A later dev run on the v2 code is not committed, so no number from it is used here.
 
-**Judge vs the owner, v1** (the same 10 replies scored by both, from the same file):
+**Judge vs the owner, v1** (the same 10 replies scored by both, from the same file). Scores are matched by run id, so these 10 scores count only for run `dev-final-20261104`:
 
 | Measure | Result |
 |---|---|
@@ -145,15 +147,14 @@ I read every reply of the v1 dev run by hand. These are the problems I found, an
 
 | What I saw in the replies | Cause | What changed in the code | Eval check that catches it |
 |---|---|---|---|
-| **Wrong weekday names.** "Tuesday, 7 Nov" is a Saturday. | `find_demo_slots` returned plain ISO dates. The model had to work out the weekday itself and got it wrong. | Every slot now comes as a ready label: `Monday 2026-11-09 18:00 IST`, with `start` and `end`. The prompt says to copy labels and never work out a weekday or a date. | `grounding.wrong_weekdays()` flags a weekday written next to a date that does not match it. A draft with one counts as **not clean**. The judge also gets a `dates_match_tools` field. If it is false, the score is capped at 2. |
-| **Short slot window.** A free Monday 18:00 was called "not available", and `reschedule_demo` was never called. | The model searched a few days. The slot asked for was outside that window. | `find_demo_slots` always covers the next 3 occurrences of every demo weekday, whatever dates the model sent. It also takes a `weekday` filter. The prompt says to book or move to a listed slot instead of calling it unavailable. | The tool-call check expects the booking or move. It caught pm-003 and pm-020 in v1. |
+| **Wrong weekday names.** pm-003: Monday 9 Nov 18:00 was in the tool output, but the reply wrote "Tuesday, 7 Nov" for a Saturday and called Monday 6 pm "not available". | `find_demo_slots` returned plain ISO dates. The model had to work out the weekday itself and got it wrong. | Every slot now comes as a ready label: `Monday 2026-11-09 18:00 IST`, with `start` and `end`. The prompt says to copy labels and never work out a weekday or a date. | `grounding.wrong_weekdays()` flags a weekday written next to a date that does not match it. A draft with one counts as **not clean**. The judge also gets a `dates_match_tools` field. If it is false, the score is capped at 2. |
+| **Short slot window.** pm-020 asked to move to Wednesday 17:00. `find_demo_slots` was searched only for 4 to 10 Nov, so Wednesday 11 Nov was never checked. The reply said "not currently available" and `reschedule_demo` was not called. | The model searched a few days. The slot asked for was outside that window. | `find_demo_slots` always covers the next 3 occurrences of every demo weekday, whatever dates the model sent. It also takes a `weekday` filter. The prompt says to book or move to a listed slot instead of calling it unavailable. | The tool-call check expects the booking or move. It caught pm-003 and pm-020 in v1. |
 | **Demo terms missing.** Replies often left out "free, 45 minutes". | The prompt never asked for it, and the tool did not return it. | `find_demo_slots` now returns `demo_terms` from the academy config. The prompt says to state them. | The judge, through each message's `must_include` list. This is not a code check, so the judge is the only line here. |
 | **Dropped names.** Plan, batch and event names were often left out. Separately, the judge called the sender's own name "invented". | The prompt did not ask for exact names. The judge was never told the sender's name. | The prompt says to use plan, batch, workshop and tournament names exactly as returned, and to name the event. The judge now gets the sender's display name (never the email address). | `must_include` through the judge. A mutation check proves the judge gets the name and not the address. |
 
 Two smaller fixes came from the same reading:
 
-- **Dates the tool never returned** (14, 21, 28 Nov). The model had extended the list itself. The slot labels and the 3-occurrence search above remove the reason to do that.
-- **The number check read some formats badly.** In v1, `7, 14 and 21 Nov` was read as three loose numbers (pm-004 lists 7, 14, 21). The check now reads equal formats as one fact: `5 pm` is `17:00`, and that list is three dates. A date or time the tools never returned still fails in every format.
+- **The number check read some formats badly.** In v1, a list like `7, 14, 21 and 28 November` was read as loose numbers, which flagged pm-004 by mistake. The check now reads equal formats as one fact: `5 pm` is `17:00`, and that list is four dates. A date or time the tools never returned still fails in every format.
 - **A Groq error code, `output_parse_failed`,** appeared once. It is now handled like `tool_use_failed`: the model is reminded and asked again, at most twice. The error comes before any tool runs, so asking again cannot book twice.
 
 Details: `docs/agent/PLAN.md`, section "Eval v2 fixes", and `docs/agent/AUDIT.md`, addendum 17.
@@ -184,7 +185,7 @@ Fill in `.env`. The keys and settings you need:
 `GOOGLE_API_KEY` in `.env.example` is not needed: Gemini is not used. Setup for the test Supabase project and the Google test calendar: `docs/agent/LAPTOP_SETUP.md`. FAQ load: `docs/agent/LAPTOP_RAG_EVALS.md`.
 
 ```powershell
-# 1. Tests with no keys (777 pass)
+# 1. Tests with no keys (793 pass)
 python -m uv run pytest tests/unit -q
 
 # 2. Check that your keys and models work
