@@ -10,7 +10,7 @@ from email_assistant.academy.eval_scorers import (
     ToolCall, Trace, check_numbers, check_tools, error_row, latency_stats, percentile, price_table, score_trace, summarize,
 )
 from email_assistant.academy.judge import (
-    JudgeGrade, ScoresError, agreement, cohens_kappa, judge_prompt, load_my_scores, JUDGE_SYSTEM_PROMPT,
+    JudgeGrade, MyScore, ScoresError, agreement, cohens_kappa, judge_prompt, load_my_scores, scores_for_run, JUDGE_SYSTEM_PROMPT,
 )
 
 SENDER = "Parent A <parent.a@example.invalid>"
@@ -399,18 +399,58 @@ def test_kappa_is_zero_when_agreement_is_only_what_chance_gives():
 
 def test_my_scores_file_is_read_and_checked(tmp_path):
     path = tmp_path / "my_scores.jsonl"
-    assert load_my_scores(path) == {}                             # no file yet is fine
-    path.write_text('{"id": "a", "quality": 4}\n\n{"id": "b", "quality": 2, "note": "too long"}\n', encoding="utf-8")
-    assert load_my_scores(path) == {"a": 4, "b": 2}
+    assert load_my_scores(path) == []                             # no file yet is fine
+    path.write_text('{"id": "a", "quality": 4}\n\n{"id": "b", "quality": 2, "run_id": "r1", "note": "too long"}\n', encoding="utf-8")
+    assert load_my_scores(path) == [MyScore("a", 4, None), MyScore("b", 2, "r1")]   # no run_id stays None: nothing is guessed
 
 
 @pytest.mark.parametrize("line,message", [
     ("not json", "not valid JSON"), ('{"id": "a"}', "quality"), ('{"id": "a", "quality": 6}', "1, 2, 3, 4 or 5"),
     ('{"id": "a", "quality": true}', "1, 2, 3, 4 or 5"), ('{"id": "a", "quality": 4, "extra": 1}', "optionally"),
     ('{"id": "a", "quality": 4}\n{"id": "a", "quality": 3}', "duplicate"),
+    ('{"id": "a", "quality": 4, "run_id": "r1"}\n{"id": "a", "quality": 3, "run_id": "r1"}', "duplicate id 'a' for run_id 'r1'"),
+    ('{"id": "a", "quality": 4, "run_id": ""}', "run_id must be non-empty text"), ('{"id": "a", "quality": 4, "run_id": "  "}', "run_id must be non-empty text"),
+    ('{"id": "a", "quality": 4, "run_id": null}', "run_id must be non-empty text"), ('{"id": "a", "quality": 4, "run_id": 7}', "run_id must be non-empty text"),
 ])
 def test_bad_my_scores_lines_are_rejected_with_the_line_number(tmp_path, line, message):
     path = tmp_path / "my_scores.jsonl"
     path.write_text(line + "\n", encoding="utf-8")
     with pytest.raises(ScoresError, match=message):
         load_my_scores(path)
+
+
+# ---- a score belongs to the run whose replies you read ---------------------------------------------
+
+def test_the_same_message_may_be_scored_once_per_run(tmp_path):
+    """You read new reply texts in a new run, so the same id twice is fine when the run_id differs."""
+    path = tmp_path / "my_scores.jsonl"
+    path.write_text('{"id": "a", "quality": 4, "run_id": "r1"}\n{"id": "a", "quality": 2, "run_id": "r2"}\n{"id": "a", "quality": 3}\n', encoding="utf-8")
+    assert load_my_scores(path) == [MyScore("a", 4, "r1"), MyScore("a", 2, "r2"), MyScore("a", 3, None)]
+
+
+def test_only_scores_of_this_run_are_used_and_the_rest_are_listed():
+    rows = [MyScore("a", 5, "r1"), MyScore("b", 3, "r1"), MyScore("c", 4, "r2"), MyScore("d", 4, None), MyScore("a", 1, "r2")]
+    used, skipped = scores_for_run(rows, "r1")
+    assert used == {"a": 5, "b": 3} and skipped == ["c", "d", "a"]
+
+
+def test_a_score_with_another_runs_id_never_counts_in_the_agreement():
+    """The bug this guards: the judge's grades for run r2 matched against scores written for the replies of r1."""
+    judge_r2 = {"a": 1, "b": 1, "c": 5}
+    mine = [MyScore("a", 5, "r1"), MyScore("b", 5, "r1"), MyScore("c", 5, "r2")]
+    used, skipped = scores_for_run(mine, "r2")
+    result = agreement(judge_r2, used)
+    assert skipped == ["a", "b"] and result["n"] == 1 and result["exact"] == 1.0 and result["bias"] == 0   # only c; a and b would have given exact 1/3
+    assert agreement(judge_r2, scores_for_run(mine, "r3")[0]) is None                                   # no row of r3: no number at all
+
+
+def test_a_score_without_a_run_id_is_never_taken_for_this_run():
+    rows = [MyScore("a", 5, None)]
+    assert scores_for_run(rows, "r1") == ({}, ["a"])
+    assert scores_for_run(rows, "") == ({}, ["a"]) and scores_for_run(rows, None) == ({}, ["a"])   # not even when the run id is empty or missing
+
+
+def test_run_ids_are_compared_exactly():
+    used, skipped = scores_for_run([MyScore("a", 5, "dev-final-20261104"), MyScore("b", 5, "Dev-final-20261104"), MyScore("c", 5, "dev-final-20261104 ")],
+                                   "dev-final-20261104")
+    assert used == {"a": 5} and skipped == ["b", "c"]

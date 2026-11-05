@@ -8,16 +8,19 @@ JUDGE_MODEL. The eval refuses to start if JUDGE_MODEL is the same model as AGENT
 
 Your own scores, `data/eval/my_scores.jsonl`, one line per message you scored (format in `data/eval/README.md`):
 
-    {"id": "pm-001", "quality": 4}                       quality: your 1-5 score for the reply, same scale as the judge
-    {"id": "pm-002", "quality": 2, "note": "too long"}   note is optional and is never used
+    {"id": "pm-001", "quality": 4, "run_id": "dev-final-20261104"}   quality: your 1-5 score for the reply, same scale as the judge
+    {"id": "pm-002", "quality": 2, "run_id": "dev-final-20261104", "note": "too long"}   note is optional and is never used
 
-`agreement` compares the judge's quality score with yours on the messages you both scored.
+`run_id` names the run whose reply texts you read. A score belongs to those texts only: another run writes different
+replies, so it needs its own score. `scores_for_run` keeps the rows of the report's run and hands back the rest as
+skipped; `agreement` then compares the judge's quality score with yours on the messages you both scored in that run.
+A row without a `run_id` is never matched to a run: the code does not guess.
 """
 
 import json
 from email.utils import parseaddr
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Callable, Iterable, Mapping, NamedTuple
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -107,12 +110,25 @@ class ScoresError(ValueError):
     """The my_scores file is not valid. The message says which line and what is wrong."""
 
 
-def load_my_scores(path: str | Path = MY_SCORES_FILE) -> dict[str, int]:
-    """Read your scores: {message id: quality 1-5}. A file that does not exist gives an empty dict."""
+class MyScore(NamedTuple):
+    """One line of my_scores.jsonl."""
+
+    id: str
+    quality: int
+    run_id: str | None  # the run whose reply texts you scored; None when the row does not say
+
+
+def load_my_scores(path: str | Path = MY_SCORES_FILE) -> list[MyScore]:
+    """Read your scores, in file order. A file that does not exist gives an empty list.
+
+    The same message id may appear once per run_id (you score the new replies of a new run); the same id twice with the
+    same run_id (or twice with no run_id) is an error.
+    """
     path = Path(path)
     if not path.exists():
-        return {}
-    scores: dict[str, int] = {}
+        return []
+    scores: list[MyScore] = []
+    seen: set[tuple[str | None, str]] = set()
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
             continue
@@ -121,15 +137,36 @@ def load_my_scores(path: str | Path = MY_SCORES_FILE) -> dict[str, int]:
             row = json.loads(line)
         except json.JSONDecodeError:
             raise ScoresError(f"{where}: not valid JSON.") from None
-        if not isinstance(row, dict) or set(row) - {"id", "quality", "note"} or "id" not in row or "quality" not in row:
-            raise ScoresError(f"{where}: use {{\"id\": ..., \"quality\": 1-5}} and optionally \"note\".")
+        if not isinstance(row, dict) or set(row) - {"id", "quality", "run_id", "note"} or "id" not in row or "quality" not in row:
+            raise ScoresError(f"{where}: use {{\"id\": ..., \"quality\": 1-5}} and optionally \"run_id\" and \"note\".")
         quality = row["quality"]
         if not isinstance(row["id"], str) or isinstance(quality, bool) or quality not in (1, 2, 3, 4, 5):
             raise ScoresError(f"{where}: id must be text and quality must be 1, 2, 3, 4 or 5.")
-        if row["id"] in scores:
-            raise ScoresError(f"{where}: duplicate id {row['id']!r}.")
-        scores[row["id"]] = quality
+        run_id = row.get("run_id")
+        if "run_id" in row and (not isinstance(run_id, str) or not run_id.strip()):
+            raise ScoresError(f"{where}: run_id must be non-empty text, like \"dev-final-20261104\" (or leave the field out).")
+        if (run_id, row["id"]) in seen:
+            raise ScoresError(f"{where}: duplicate id {row['id']!r}" + (f" for run_id {run_id!r}." if run_id else " (no run_id)."))
+        seen.add((run_id, row["id"]))
+        scores.append(MyScore(row["id"], quality, run_id))
     return scores
+
+
+def scores_for_run(scores: Iterable[MyScore], run_id: str) -> tuple[dict[str, int], list[str]]:
+    """Split your scores for one report: ({id: quality} of the rows scored on `run_id`, ids of every other row).
+
+    A score belongs to the reply texts you read, and every run writes new texts. So a row counts only if its run_id is
+    exactly this run's. A row with another run_id, or with none, is skipped (its id is listed); a missing run_id is never
+    taken to mean "this run".
+    """
+    used: dict[str, int] = {}
+    skipped: list[str] = []
+    for score in scores:
+        if score.run_id is not None and score.run_id == run_id:
+            used[score.id] = score.quality
+        else:
+            skipped.append(score.id)
+    return used, skipped
 
 
 def cohens_kappa(a: list[bool], b: list[bool]) -> float | None:
