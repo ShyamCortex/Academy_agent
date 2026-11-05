@@ -35,6 +35,7 @@ Everything else is in [Later](#later-not-in-the-22-nov-core).
 | 24 | A streamed model call (`langgraph dev`, Studio) reports "Tool choice is required, but model did not call a tool" as a plain `APIError` with no status code and no `tool_use_failed` code. It is recognised by error type (`APIError` of the groq or openai SDK, also as the cause of another error) **and** message, and gets the same remind-and-retry (max 2) as the other form; never waited on. `e2e.py` reports the calendar event and outbox lines even when the run ends in an error or times out (never a pass: exit code 1). | Shyam |
 | 25 | The MCP child process never reads `.env`: the bridge starts it with `--no-dotenv` and hands it only `SERVER_ENV_VARS`. Started by hand (`python -m email_assistant.academy.mcp_server`) it still reads `.env`. Tests that start a child use a clean environment and an empty temp folder (`tests/academy_helpers.clean_env`). | Shyam |
 | 26 | When `safety_eval` stops on rate limits it prints which limit Groq named (RPM, RPD, TPM, TPD, in words) and the retry-after time, from the `retry-after` header or the "try again in" text. Never any other error text. | Shyam |
+| 27 | Your scores in `my_scores.jsonl` carry the `run_id` of the run whose reply texts you read. The judge-vs-you agreement uses only rows whose `run_id` equals the report's run id; rows with another `run_id` or none are skipped and listed ("N of your scores skipped ..."). A missing `run_id` is never guessed. The same message id may appear once per run. The 10 committed v1 scores now say `dev-final-20261104`. Agent, prompts, tools, triage, grounding, judge prompt and models are unchanged. | Shyam |
 
 ## Status
 
@@ -49,6 +50,7 @@ Everything else is in [Later](#later-not-in-the-22-nov-core).
 | 5b | Eval v2: fix the general causes found in the v1 dev replies | `claude/relaxed-goodall-kqyxlb` (name set by the cloud session) | — | Laptop: fresh dev run `dev-v2-20261104` | 4–5 Nov | **Code done in the cloud, 714 no-key tests pass (MCP off and on), mutation check done; PR open. v2 numbers pending** ([Eval v2 fixes](#eval-v2-fixes)) |
 | 5c | Live-server fix: streamed "tool choice is required" error; e2e report after an error | `claude/streamed-tool-choice-recovery` | — | Laptop: `langgraph dev` + `e2e` again | 4–5 Nov | **Code done in the cloud, 736 no-key tests pass, 10 new mutations caught; PR open** ([Streamed tool-choice error](#streamed-tool-choice-error)) |
 | 5d | MCP child isolation, rate-limit message (built on top of 5c; one PR with both) | `claude/mcp-child-isolation` | — | Laptop: `pytest tests/unit` | 4–5 Nov | **Code done in the cloud, 777 no-key tests pass (also with a decoy `.env` in the repo), 14 more mutations caught; PR open** ([MCP child isolation](#mcp-child-isolation-and-the-rate-limit-message)) |
+| 5e | Judge-vs-you agreement matches scores by run id, not only by message id | `claude/dazzling-cerf-fe8xwh` (name set by the cloud session) | — | Laptop: `pytest tests/unit`; then score the v2 replies with `run_id` | 5 Nov | **Code done in the cloud, 793 no-key tests pass (MCP off and on), 10 new mutations caught; PR open** ([Scores belong to one run](#scores-belong-to-one-run)) |
 | 7 | README + demo video | `phase/7-show` | 3.5 | You record the video | 20–22 Nov | Not started |
 | | **Total** | | **30** | | | |
 
@@ -435,6 +437,51 @@ uv run python -m email_assistant.academy.safety_eval --run-id dev-v2-20261104
 ```
 
 Expect `714 passed` from pytest. The run writes `docs/agent/results/eval_dev-v2-20261104.{md,json,jsonl}` and leaves the v1 files alone. Compare the two tables; do not change `dev_messages.jsonl` between them. If the run stops on rate limits, run the same command again.
+
+---
+
+## Scores belong to one run
+
+Branch `claude/dazzling-cerf-fe8xwh` (name set by the cloud session), from `main` at `54d0c9c`.
+
+**The bug.** `load_my_scores` returned `{message id: quality}` and `agreement` paired it with the judge's grades by id alone (`judge.py` `agreement`, `ids = sorted(set(judge) & set(mine))`; called from `safety_eval.py` `main`). The 10 scores in `data/eval/my_scores.jsonl` were written for the replies of run `dev-final-20261104`. The report for the later run `dev-v2-20261105` (new code, different reply texts) matched 6 of them against the judge's grades for the *new* replies and printed "Same score 33%, kappa 0.33". That number compares a human score of one text with a judge grade of another text. It means nothing. The correct v1 number is the committed one: 10 scored, 70% same, kappa 0.62.
+
+**The fix.**
+
+| Where | Change |
+|---|---|
+| `judge.load_my_scores` | Accepts an optional `run_id` (non-empty text; `""`, `null` and numbers are errors). Returns a list of `MyScore(id, quality, run_id)`; `run_id` is `None` when the row has none. The duplicate check is now per `(run_id, id)`: the same message may be scored once per run. |
+| `judge.scores_for_run(scores, run_id)` | New. Returns the `{id: quality}` of rows whose `run_id` equals the report's run id exactly, and the ids of every other row. A row with no `run_id` never matches, not even an empty run id. |
+| `safety_eval.main` | `mine, skipped = scores_for_run(load_my_scores(...), run_id)`; `agreement(judge_scores, mine)` is unchanged. `meta["my_scores_skipped"]` holds the ids. |
+| Table | First line of "Judge vs your scores": `- N of your scores skipped (scored on another run or no run_id): ids`. Shown for N = 0 too, so a reader can see the filter ran. If nothing is left to compare, the "No overlap" line names the `run_id` to write. |
+| Review page | `outbox/eval_review_<run-id>.md` now tells you to write `"run_id": "<that run id>"`. |
+| `data/eval/my_scores.jsonl` | `"run_id": "dev-final-20261104"` added to all 10 rows. `id` and `quality` are unchanged (there are no notes). |
+| `data/eval/README.md`, `LAPTOP_RAG_EVALS.md` | New format and the reason. |
+
+**Not changed:** the agent graph, prompts, tools, triage, grounding, the judge prompt and the models. The held-out run must see the same agent behaviour. `data/eval/heldout_messages.jsonl` is still not in the repo and was not created.
+
+**The committed v1 results were not rewritten.** `--report-only` on the v1 rows with today's code gives the same agreement block (10 scored, 70% same, kappa 0.62) and the same triage, sensitive and tool-call numbers. It would also add the new "0 skipped" line, but it would change more than that: the `numbers` and `quality` sections, two table captions and one extra judge line differ because those files were written before eval v2 (checked on a clean copy of `main`, without this change). So `eval_dev-final-20261104.*` stay as they are, and a test checks the parts this change owns against them.
+
+**Tests (no keys).** Unit: a score with another run's id never counts; a score with no run id never counts; run ids are compared exactly; skipped ids are listed; the same message id on two runs is allowed; bad `run_id` values are rejected with the line number. Runner (fake models): other-run and no-run rows are skipped and listed, the right row still counts next to a wrong one, the review page names the run id. With the **real committed files** and no model call: `--report-only` for `dev-final-20261104` gives 10 scored, 70% same, kappa 0.62, 0 skipped; the same rows read as `dev-v2-20261105` use none of the 10 scores and say "10 of your scores skipped". 793 pass (was 777), MCP off and on.
+
+**Mutation check.** 10 new mutations, all caught (`uv run python scripts/mutation_check.py "my scores"`): another run's score counts; a score with no run id counts; run ids compared without case; skipped ids not collected; duplicate check ignores the run id; empty `run_id` accepted; the report ignores the run id; the report matches against a fixed run id; the table leaves out the skipped ids; the result file leaves them out.
+
+**What this means for the next runs.** The `dev-v2-20261105` report will say "10 of your scores skipped" and show no agreement number until you score the v2 replies (`outbox/eval_review_dev-v2-20261105.md`) with `"run_id": "dev-v2-20261105"`. Keep the 10 v1 rows in the file. The held-out run: score its replies with `"run_id": "heldout"` (the default id of the first held-out run).
+
+Laptop:
+
+```bash
+git fetch origin
+git checkout claude/dazzling-cerf-fe8xwh
+git pull
+uv sync --extra dev
+uv run pytest tests/unit -q
+mkdir -p outbox/check_v1
+cp docs/agent/results/eval_dev-final-20261104.jsonl outbox/check_v1/
+uv run python -m email_assistant.academy.safety_eval --run-id dev-final-20261104 --report-only --out-dir outbox/check_v1
+```
+
+Expect `793 passed`, then "Messages scored by both: 10. Same score: **70%**" and "Cohen's kappa: 0.62" in the printed table. (`outbox/check_v1` is git-ignored and keeps the committed v1 files untouched; `--report-only` reads the saved rows from the `--out-dir`, so they are copied there first.)
 
 ---
 

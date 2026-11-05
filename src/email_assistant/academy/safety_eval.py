@@ -47,7 +47,7 @@ from email_assistant.academy import config, settings
 from email_assistant.academy.dataset import Message, load_messages
 from email_assistant.academy.eval_harness import UsageTracker, run_message
 from email_assistant.academy.eval_scorers import error_row, score_trace, summarize
-from email_assistant.academy.judge import MY_SCORES_FILE, JudgeFn, agreement, judge_reply, load_my_scores
+from email_assistant.academy.judge import MY_SCORES_FILE, JudgeFn, agreement, judge_reply, load_my_scores, scores_for_run
 
 RESULTS_DIR = Path("docs/agent/results")
 PRIVATE_DIR = Path("outbox")  # git-ignored
@@ -315,8 +315,10 @@ def render_markdown(summary: dict, meta: dict) -> str:
               f"- Judge says a weekday or date does not match the tool results: {q['dates_mismatch_ids'] or 'none'}"]
 
     lines += ["", "## Judge vs your scores", ""]
+    skipped = meta.get("my_scores_skipped", [])
+    lines.append(f"- {len(skipped)} of your scores skipped (scored on another run or no run_id)" + (f": {', '.join(skipped)}" if skipped else ""))
     if a is None:
-        lines.append(f"No overlap yet: put your 1-5 scores in `{meta['my_scores']}` (format in `data/eval/README.md`).")
+        lines.append(f"- No overlap yet: put your 1-5 scores for this run in `{meta['my_scores']}`, each with `\"run_id\": \"{meta['run_id']}\"` (format in `data/eval/README.md`).")
     else:
         lines += [f"- Messages scored by both: {a['n']}. Same score: **{pct(a['exact'])}**. Within 1 point: {pct(a['within_one'])}",
                   f"- Judge minus you, on average: {num(a['bias'])} (above 0 = the judge is kinder than you)",
@@ -337,10 +339,11 @@ def render_markdown(summary: dict, meta: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_review(path: Path, messages: Sequence[Message], rows: dict[str, dict], store: PrivateStore) -> None:
+def write_review(path: Path, messages: Sequence[Message], rows: dict[str, dict], store: PrivateStore, run_id: str) -> None:
     """A readable page to check replies and write my_scores.jsonl. Local only (it holds the replies)."""
     parts = ["# Replies to review (local file; do not commit)\n\nWrite your score for each reply in `data/eval/my_scores.jsonl`: "
-             '`{"id": "...", "quality": 1-5}`. Score the reply before you read the judge\'s note.\n']
+             f'`{{"id": "...", "quality": 1-5, "run_id": "{run_id}"}}`. The run_id ties your score to the reply texts on this page; '
+             "scores without it, or with another run's id, are not used for this run. Score the reply before you read the judge's note.\n"]
     for message in messages:
         row, saved = rows.get(message.id), store.get(message.id)
         if not row or row["status"] != "scored" or not saved or not saved.get("drafts"):
@@ -445,18 +448,18 @@ def main(argv: Sequence[str] | None = None, *, workflow=None, judge: JudgeFn = j
     if not rows:
         say("Nothing is scored yet, so there is no table.")
         return 2 if stopped else 1
-    mine = load_my_scores(args.my_scores)
+    mine, skipped = scores_for_run(load_my_scores(args.my_scores), run_id)
     judge_scores = {r["id"]: r["judge"]["quality"] for r in rows if r["status"] == "scored" and r["judge_status"] == "done"}
     summary = summarize(rows, agreement=agreement(judge_scores, mine))
     runs = read_lock(out_dir / "heldout_lock.json")["runs"] if args.heldout else []
     meta = {"run_id": run_id, "heldout": args.heldout, "date": clock().strftime("%Y-%m-%d %H:%M"), "dataset": str(dataset),
-            "has_samples": any(r.get("sample") for r in rows), "calendar": mode, "my_scores": args.my_scores, "forced": len(runs) > 1,
+            "has_samples": any(r.get("sample") for r in rows), "calendar": mode, "my_scores": args.my_scores, "my_scores_skipped": skipped, "forced": len(runs) > 1,
             "models": {role: os.environ.get(var, "") for role, var in (("triage", "TRIAGE_MODEL"), ("agent", "AGENT_MODEL"), ("judge", "JUDGE_MODEL"))}}
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"eval_{run_id}.json").write_text(json.dumps({"meta": meta, "summary": summary}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     table = render_markdown(summary, meta)
     (out_dir / f"eval_{run_id}.md").write_text(table, encoding="utf-8")
-    write_review(private_dir / f"eval_review_{run_id}.md", messages, by_id, PrivateStore(private_dir / f"eval_private_{run_id}.json"))
+    write_review(private_dir / f"eval_review_{run_id}.md", messages, by_id, PrivateStore(private_dir / f"eval_private_{run_id}.json"), run_id)
     say("\n" + table)
     say(f"Saved: {out_dir / f'eval_{run_id}.md'} (table), .json (numbers), .jsonl (per-message rows).")
     say(f"Replies to check by eye (local only): {private_dir / f'eval_review_{run_id}.md'}")

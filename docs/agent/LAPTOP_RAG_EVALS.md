@@ -130,7 +130,7 @@ Results land in `docs/agent/results/`: `eval_dev-<date>.md` (the table), `.json`
 Then score the replies yourself so the judge can be compared with you:
 
 1. Open `outbox/eval_review_dev-<date>.md` (local only). Read each reply **before** the judge's note.
-2. Write `data/eval/my_scores.jsonl` (format in `data/eval/README.md`).
+2. Write `data/eval/my_scores.jsonl` (format in `data/eval/README.md`). Every row needs `"run_id": "<the run id of the page you read>"`: a score counts only for the run whose reply texts you read. Keep the rows of older runs in the file; they are skipped, not deleted.
 3. Rebuild the table with no model calls:
 
 ```bash

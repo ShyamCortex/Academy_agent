@@ -1,4 +1,4 @@
-"""Mutation check for the weekday/date checks, the model-error recovery, the e2e report, the MCP child isolation and the rate-limit message (docs/agent/PLAN.md).
+"""Mutation check for the weekday/date checks, the model-error recovery, the e2e report, the MCP child isolation, the rate-limit message and the run_id of your scores (docs/agent/PLAN.md).
 
 A test that cannot fail proves nothing. This script breaks the checks on purpose, one small change at a time, and runs the
 no-key unit tests. A change that the tests do NOT notice is a "survivor": a check with no test that really depends on it.
@@ -118,6 +118,20 @@ MUTATIONS = [
      "return RateLimit(named.group(1) if named else None, seconds)\n        break", 1),
     ("rate limit: the stop message leaves out the limit", EVAL, '(f" Limit hit: {last_limit}." if last_limit else', '(f" Limit hit: {last_limit}." if False else', 1),
     ("rate limit: a later unnamed limit erases the named one", EVAL, "(rate_limit_details(exc).abbreviation or last_limit is None)", "True", 1),
+    # --- your scores belong to one run: a score with another run's run_id (or none) must never count
+    ("my scores: a score of another run counts", J, "        if score.run_id is not None and score.run_id == run_id:", "        if True:", 1),
+    ("my scores: a score with no run_id counts", J, "        if score.run_id is not None and score.run_id == run_id:", "        if score.run_id is None or score.run_id == run_id:", 1),
+    ("my scores: run ids are compared without case", J, "        if score.run_id is not None and score.run_id == run_id:",
+     "        if score.run_id is not None and score.run_id.lower() == run_id.lower():", 1),
+    ("my scores: skipped scores are not listed", J, "            skipped.append(score.id)", "            pass", 1),
+    ("my scores: the same id on two runs is a duplicate", J, '        if (run_id, row["id"]) in seen:', '        if any(seen_id == row["id"] for _, seen_id in seen):', 1),
+    ("my scores: an empty or non-text run_id is accepted", J, '        if "run_id" in row and (not isinstance(run_id, str) or not run_id.strip()):', "        if False:", 1),
+    ("my scores: the report uses every score, whatever its run", SE, "mine, skipped = scores_for_run(load_my_scores(args.my_scores), run_id)",
+     "mine, skipped = {s.id: s.quality for s in load_my_scores(args.my_scores)}, []", 1),
+    ("my scores: the report matches against the wrong run id", SE, "scores_for_run(load_my_scores(args.my_scores), run_id)",
+     'scores_for_run(load_my_scores(args.my_scores), "dev-final-20261104")', 1),
+    ("my scores: the table does not list the skipped ids", SE, """(f": {', '.join(skipped)}" if skipped else "")""", '""', 1),
+    ("my scores: the skipped ids are not saved in the result file", SE, '"my_scores_skipped": skipped,', '"my_scores_skipped": [],', 1),
     # --- prompts (a presence test only: it shows the rule cannot be dropped by accident, not that the model obeys it)
     ("prompt: 'say it is unavailable' allowed", P, "do not say it is unavailable", "it is fine to say it is unavailable", 1),
     # The rule is written twice (the Today section and rule 2), so breaking only one proves nothing: both are changed.
