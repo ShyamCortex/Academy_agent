@@ -7,7 +7,7 @@ The test set for the Academy Support Agent. One message per line (JSONL, UTF-8, 
 | `sample_messages.jsonl` | 5 **SAMPLE** rows that show the format. Invented by the build assistant. Do not count them in your 40. |
 | `dev_messages.jsonl` | **Your 30 dev messages** (`"split": "dev"`). You create this file. Evals read it by default. Tune prompts on these. |
 | `heldout_messages.jsonl` | **Your 10 held-out messages** (`"split": "heldout"`). You create this file. Run once, with `--heldout`, at the very end. |
-| `my_scores.jsonl` | **Your own 1-5 scores** for the agent's replies, to measure how often the judge agrees with you. Optional. Format below. |
+| `my_scores.jsonl` | **Your own 1-5 scores** for the agent's replies, to measure how often the judge agrees with you. Optional. Each score names the run (`run_id`) whose replies you read. Format below. |
 
 All messages must be **synthetic**: made up, or rewritten so no real child or parent can be identified. Use `@example.invalid` addresses and first names only.
 
@@ -77,17 +77,34 @@ Without `--full` it checks each row. With `--full` it also checks the finished-s
 After a run, open the review page `outbox/eval_review_<run-id>.md` (made on your computer only; it is git-ignored because it holds the replies). Read each reply **before** you read the judge's note, and give it a score. One JSON object per line:
 
 ```json
-{"id": "pm-001", "quality": 4}
-{"id": "pm-002", "quality": 2, "note": "too long, and it repeats the fee twice"}
+{"id": "pm-001", "quality": 4, "run_id": "dev-final-20261104"}
+{"id": "pm-002", "quality": 2, "run_id": "dev-final-20261104", "note": "too long, and it repeats the fee twice"}
 ```
 
 | Field | Required | Meaning |
 |---|---|---|
 | `id` | yes | The message id from the dataset. |
 | `quality` | yes | Whole number 1 to 5. Same scale as the judge (below). |
+| `run_id` | yes in practice | The `--run-id` of the run whose reply you read (the review page shows it, and it is in the page's file name). Non-empty text. The file loads without it, but a row without it is never used (see below). |
 | `note` | no | For you. Never used. |
 
 Other fields are rejected. Score every reply you can; the more messages both of you scored, the more the agreement number means. Held-out ids may be in the same file: they are only used when you run `--heldout`.
+
+### Why `run_id`: a score belongs to one run's reply texts
+
+You score the **text of a reply**. Every run writes new texts (new code, a different model answer, even the same code on another day), so a score of run A says nothing about the reply the judge graded in run B. Matching by message id alone paired the two and printed an agreement number that measured nothing (10 scores for run `dev-final-20261104` were matched against the judge's grades for the different replies of a later run).
+
+So the report uses **only the rows whose `run_id` equals that report's run id**. Every other row is skipped, and the table says so:
+
+```
+- 3 of your scores skipped (scored on another run or no run_id): pm-001, pm-003, pm-004
+```
+
+- A row with **another** `run_id`, or with **none**, is skipped. The code never guesses which run a row without `run_id` was meant for.
+- The comparison is exact: `Dev-final-20261104` is not `dev-final-20261104`.
+- The same message id may appear once per run, so after a new run you add new rows (with the new `run_id`) and **keep** the old ones. The same id twice with the same `run_id` is an error.
+- If every row is skipped there is no agreement number for that run; score that run's replies to get one.
+- Old rows written before this field existed: add the `run_id` of the run you read when you scored them. If you are not sure which run that was, leave the field out and the row is simply not used.
 
 | Score | Meaning |
 |---|---|

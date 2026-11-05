@@ -1,7 +1,9 @@
 """The eval runner end to end, with fake models: batches, resume, the judge, the held-out rules and the saved files."""
 
 import json
+import shutil
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -131,11 +133,99 @@ def test_a_failing_run_is_visible_in_the_table(env):
 
 
 def test_your_scores_are_compared_with_the_judge(env):
-    write(env / "my_scores.jsonl", [{"id": "d1", "quality": 3}])
+    write(env / "my_scores.jsonl", [{"id": "d1", "quality": 3, "run_id": "dev-20261104"}])
     _, _, out = cli(env, DEV(env), triage_script=["book_demo", "sensitive", "ignore"], agent_script=drafting(), judge_script=[good_grade(5)])
     agreement = json.loads((out / "eval_dev-20261104.json").read_text(encoding="utf-8"))["summary"]["agreement"]
     assert agreement["n"] == 1 and agreement["exact"] == 0.0 and agreement["bias"] == 2
-    assert "Same score" in (out / "eval_dev-20261104.md").read_text(encoding="utf-8")
+    table = (out / "eval_dev-20261104.md").read_text(encoding="utf-8")
+    assert "Same score" in table and "- 0 of your scores skipped (scored on another run or no run_id)\n" in table
+
+
+def test_scores_from_another_run_or_without_a_run_id_are_skipped_and_listed(env):
+    """The judge grades the replies of THIS run; your score of another run's reply text is not about them."""
+    write(env / "my_scores.jsonl", [{"id": "d1", "quality": 1, "run_id": "dev-final-20261104"}, {"id": "d2", "quality": 1}])
+    code, _, out = cli(env, DEV(env), triage_script=["book_demo", "sensitive", "ignore"], agent_script=drafting(), judge_script=[good_grade(5)])
+    saved = json.loads((out / "eval_dev-20261104.json").read_text(encoding="utf-8"))
+    table = (out / "eval_dev-20261104.md").read_text(encoding="utf-8")
+    assert code == 0 and saved["summary"]["agreement"] is None and saved["meta"]["my_scores_skipped"] == ["d1", "d2"]
+    assert "- 2 of your scores skipped (scored on another run or no run_id): d1, d2" in table and "Same score" not in table
+    assert '`"run_id": "dev-20261104"`' in table                                  # and it says which run_id to write
+
+
+def test_one_wrong_run_row_does_not_remove_the_right_ones(env):
+    write(env / "my_scores.jsonl", [{"id": "d1", "quality": 3, "run_id": "dev-20261104"}, {"id": "d1", "quality": 1, "run_id": "dev-final-20261104"}])
+    _, _, out = cli(env, DEV(env), triage_script=["book_demo", "sensitive", "ignore"], agent_script=drafting(), judge_script=[good_grade(5)])
+    saved = json.loads((out / "eval_dev-20261104.json").read_text(encoding="utf-8"))
+    assert saved["summary"]["agreement"]["n"] == 1 and saved["summary"]["agreement"]["bias"] == 2 and saved["meta"]["my_scores_skipped"] == ["d1"]
+
+
+def test_the_review_page_tells_you_which_run_id_to_write(env):
+    _, _, _ = cli(env, DEV(env), triage_script=["book_demo", "sensitive", "ignore"], agent_script=drafting(), judge_script=[good_grade(5)])
+    review = (env / "private" / "eval_review_dev-20261104.md").read_text(encoding="utf-8")
+    assert '"run_id": "dev-20261104"' in review
+
+
+# ---- the committed v1 run, re-read with no model call ----------------------------------------------
+
+ROOT = Path(__file__).resolve().parents[2]
+V1 = "dev-final-20261104"
+
+
+@pytest.fixture
+def committed_v1(env):
+    """A temp copy of the committed v1 rows, so the real result files are never written."""
+    out = env / "committed"
+    out.mkdir()
+    shutil.copy(ROOT / "docs/agent/results" / f"eval_{V1}.jsonl", out)
+    return out
+
+
+def report_only(env, out, run_id, scores=ROOT / "data/eval/my_scores.jsonl"):
+    said = []
+    code = safety_eval.main(["--dataset", str(ROOT / "data/eval/dev_messages.jsonl"), "--run-id", run_id, "--report-only", "--out-dir", str(out),
+                             "--private-dir", str(env / "private"), "--my-scores", str(scores)],
+                            now=lambda: datetime(2026, 11, 4, 18, 38, tzinfo=config.TIMEZONE), say=said.append)
+    assert code == 0, said
+    return json.loads((out / f"eval_{run_id}.json").read_text(encoding="utf-8")), (out / f"eval_{run_id}.md").read_text(encoding="utf-8")
+
+
+def test_the_committed_v1_scores_still_give_the_committed_v1_numbers(env, committed_v1, monkeypatch):
+    """`safety_eval --run-id dev-final-20261104 --report-only` on the real rows and the real my_scores.jsonl: 10 scored, 70% same, kappa 0.62."""
+    committed_models = json.loads((ROOT / f"docs/agent/results/eval_{V1}.json").read_text(encoding="utf-8"))["meta"]["models"]   # the run's own model names
+    for role, var in (("triage", "TRIAGE_MODEL"), ("agent", "AGENT_MODEL"), ("judge", "JUDGE_MODEL")):
+        monkeypatch.setenv(var, committed_models[role])
+    saved, table = report_only(env, committed_v1, V1)
+    agreement = saved["summary"]["agreement"]
+    assert agreement["n"] == 10 and agreement["exact"] == 0.7 and round(agreement["good_enough_kappa"], 2) == 0.62
+    assert saved["meta"]["my_scores_skipped"] == []
+    assert "- 0 of your scores skipped (scored on another run or no run_id)" in table
+    assert "Messages scored by both: 10. Same score: **70%**" in table and "Cohen's kappa: 0.62" in table
+    # What this change owns is what is committed: the agreement block and the "Judge vs your scores" section, plus the one new skipped line.
+    # (Other sections of the v1 files were written before eval v2 and differ from today's code for that reason, so the files are not rewritten.)
+    committed = json.loads((ROOT / f"docs/agent/results/eval_{V1}.json").read_text(encoding="utf-8"))["summary"]
+    assert saved["summary"]["agreement"] == committed["agreement"]
+    assert all(saved["summary"][key] == committed[key] for key in ("triage", "sensitive", "tools", "n_messages", "n_scored", "n_errors"))
+
+    def section(markdown):
+        return markdown.split("## Judge vs your scores\n")[1].split("## Cost and latency")[0].strip().splitlines()
+
+    committed_section = section((ROOT / f"docs/agent/results/eval_{V1}.md").read_text(encoding="utf-8"))
+    assert [line for line in section(table) if not line.startswith("- 0 of your scores skipped")] == committed_section
+
+
+def test_the_committed_v1_scores_do_not_count_for_a_later_run(env, committed_v1):
+    """The reported bug: the same rows read as run dev-v2-20261105 (new reply texts). None of the 10 scores may be used."""
+    v2_rows = committed_v1 / "eval_dev-v2-20261105.jsonl"
+    shutil.copy(committed_v1 / f"eval_{V1}.jsonl", v2_rows)     # judged rows for 30 ids, as a later run would have
+    saved, table = report_only(env, committed_v1, "dev-v2-20261105")
+    assert saved["summary"]["agreement"] is None and len(saved["meta"]["my_scores_skipped"]) == 10
+    assert "- 10 of your scores skipped (scored on another run or no run_id): pm-001, pm-003," in table
+    assert "Same score" not in table and "kappa" not in table
+
+
+def test_the_committed_scores_file_has_a_run_id_on_every_row():
+    rows = [json.loads(line) for line in (ROOT / "data/eval/my_scores.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(rows) == 10 and {r["run_id"] for r in rows} == {V1}
 
 
 # ---- small batches, pauses, resume -----------------------------------------------------------------
