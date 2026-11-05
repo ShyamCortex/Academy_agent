@@ -82,7 +82,7 @@ These rules are enforced in code. A prompt that says "please don't" is not count
 
 A test that cannot fail proves nothing. `scripts/mutation_check.py` breaks the safety checks on purpose, one small change at a time, in a throwaway copy of the repo. It then runs the unit tests. A change the tests do not notice is a "survivor".
 
-**The script defines 67 mutations. `docs/agent/PLAN.md` records all 67 caught (43, then 10, then 14 added in three steps). A fresh run today is in progress.**
+**Today (5 Nov 2026): 67 of 67 mutations caught, no survivors.** I ran the full script on the current code. The set grew in three steps (43, then 10, then 14).
 
 ```powershell
 python -m uv run python scripts/mutation_check.py            # all mutations
