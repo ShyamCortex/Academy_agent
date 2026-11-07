@@ -1,0 +1,206 @@
+{
+  "meta": {
+    "run_id": "heldout-20261105",
+    "heldout": true,
+    "date": "2026-11-07 19:34",
+    "dataset": "data\\eval\\heldout_messages.jsonl",
+    "has_samples": false,
+    "calendar": "fake",
+    "my_scores": "data\\eval\\my_scores.jsonl",
+    "my_scores_skipped": [
+      "pm-001",
+      "pm-003",
+      "pm-004",
+      "pm-006",
+      "pm-007",
+      "pm-009",
+      "pm-012",
+      "pm-018",
+      "pm-020",
+      "pm-021"
+    ],
+    "forced": false,
+    "models": {
+      "triage": "groq:openai/gpt-oss-20b",
+      "agent": "groq:openai/gpt-oss-120b",
+      "judge": "groq:qwen/qwen3.8-27b"
+    }
+  },
+  "summary": {
+    "n_messages": 10,
+    "n_scored": 10,
+    "n_errors": 0,
+    "triage": {
+      "total": 10,
+      "correct": 10,
+      "accuracy": 1.0,
+      "errors": 0,
+      "per_label": {
+        "book_demo": {
+          "n": 2,
+          "correct": 2,
+          "accuracy": 1.0
+        },
+        "fees_plans": {
+          "n": 1,
+          "correct": 1,
+          "accuracy": 1.0
+        },
+        "schedule": {
+          "n": 1,
+          "correct": 1,
+          "accuracy": 1.0
+        },
+        "workshop_tournament": {
+          "n": 1,
+          "correct": 1,
+          "accuracy": 1.0
+        },
+        "reschedule_cancel": {
+          "n": 1,
+          "correct": 1,
+          "accuracy": 1.0
+        },
+        "sensitive": {
+          "n": 2,
+          "correct": 2,
+          "accuracy": 1.0
+        },
+        "ignore": {
+          "n": 2,
+          "correct": 2,
+          "accuracy": 1.0
+        }
+      },
+      "confusions": [],
+      "per_language": {
+        "en": {
+          "n": 7,
+          "correct": 7,
+          "accuracy": 1.0
+        },
+        "te": {
+          "n": 1,
+          "correct": 1,
+          "accuracy": 1.0
+        },
+        "tenglish": {
+          "n": 2,
+          "correct": 2,
+          "accuracy": 1.0
+        }
+      }
+    },
+    "sensitive": {
+      "n": 2,
+      "recall": 1.0,
+      "missed_ids": [],
+      "never_drafted": 1.0,
+      "drafted_ids": [],
+      "precision": 1.0,
+      "over_escalated_ids": []
+    },
+    "numbers": {
+      "drafts_checked": 6,
+      "clean": 6,
+      "rate": 1.0,
+      "offenders": []
+    },
+    "tools": {
+      "n": 10,
+      "passed": 10,
+      "rate": 1.0,
+      "n_correct_triage": 10,
+      "rate_given_correct_triage": 1.0,
+      "failed_ids": [],
+      "missing": {},
+      "unexpected_writes": {},
+      "bad_slot_ids": [],
+      "wrong_recipient_ids": [],
+      "messages_with_tool_errors": 0
+    },
+    "quality": {
+      "n_judged": 6,
+      "n_waiting": 0,
+      "mean": 4.0,
+      "distribution": {
+        "1": 0,
+        "2": 0,
+        "3": 3,
+        "4": 0,
+        "5": 3
+      },
+      "good_enough": 0.5,
+      "must_include_met": 0.6666666666666666,
+      "must_not_say_violated_ids": [],
+      "chess_advice_ids": [],
+      "dates_mismatch_ids": [],
+      "no_chess_teaching": 1.0
+    },
+    "agreement": null,
+    "targets": [
+      {
+        "name": "sensitive_recall",
+        "target": 1.0,
+        "value": 1.0,
+        "met": true
+      },
+      {
+        "name": "sensitive_never_drafted",
+        "target": 1.0,
+        "value": 1.0,
+        "met": true
+      },
+      {
+        "name": "numbers_grounded",
+        "target": 1.0,
+        "value": 1.0,
+        "met": true
+      },
+      {
+        "name": "no_chess_teaching",
+        "target": 0.95,
+        "value": 1.0,
+        "met": true
+      }
+    ],
+    "usage": {
+      "per_role": {
+        "triage": {
+          "calls": 10,
+          "input_tokens": 6972,
+          "output_tokens": 1133
+        },
+        "agent": {
+          "calls": 22,
+          "input_tokens": 63734,
+          "output_tokens": 3994
+        },
+        "judge": {
+          "calls": 6,
+          "input_tokens": 12715,
+          "output_tokens": 896
+        }
+      },
+      "total_usd": null,
+      "usd_per_message": null,
+      "tokens_per_message": 8944.4
+    },
+    "latency": {
+      "run_seconds": {
+        "n": 10,
+        "mean": 42.6916,
+        "p50": 36.993,
+        "p95": 169.179,
+        "max": 169.179
+      },
+      "judge_seconds": {
+        "n": 6,
+        "mean": 1.4378333333333335,
+        "p50": 1.28,
+        "p95": 2.012,
+        "max": 2.012
+      }
+    }
+  }
+}
